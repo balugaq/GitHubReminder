@@ -241,10 +241,10 @@ async fn poll_item(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> Res
         let first_run = cursor.is_none();
         // 升序遍历新于游标的评论，事件按时间正序浮现
         for c in comments.iter().rev() {
-            if let Some(last) = cursor {
-                if c.id <= last {
-                    continue;
-                }
+            if let Some(last) = cursor
+                && c.id <= last
+            {
+                continue;
             }
             events.push(Event {
                 kind: "comment".into(),
@@ -295,10 +295,10 @@ async fn poll_issues(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> R
         if !is_pr && !w.issues {
             continue;
         }
-        if let Some(c) = &cursor {
-            if i.created_at <= *c {
-                continue;
-            }
+        if let Some(c) = &cursor
+            && i.created_at <= *c
+        {
+            continue;
         }
         events.push(Event {
             kind: if is_pr { "pr" } else { "issue" }.into(),

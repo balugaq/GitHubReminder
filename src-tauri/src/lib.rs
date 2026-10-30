@@ -53,6 +53,8 @@ fn set_token(state: tauri::State<Arc<AppState>>, token: Option<String>) -> Confi
     state.config.lock().unwrap().clone()
 }
 
+// tauri 命令参数需平铺供前端 invoke，不收拢为结构体
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn add_watch(
     state: tauri::State<Arc<AppState>>,
@@ -224,7 +226,7 @@ fn spawn_poller(app: tauri::AppHandle, state: Arc<AppState>) {
                         .notification()
                         .builder()
                         .title("GitHub 通知")
-                        .body(&toast_summary(&events))
+                        .body(toast_summary(&events))
                         .show();
                 }
             }

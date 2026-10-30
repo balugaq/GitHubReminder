@@ -36,10 +36,10 @@ extern "system" fn enum_proc(hwnd: HWND, _lparam: LPARAM) -> BOOL {
         return BOOL(1);
     }
     // 检查该窗口是否挂着桌面图标层
-    if let Ok(child) = unsafe { FindWindowExW(Some(hwnd), None, w!("SHELLDLL_DefView"), None) } {
-        if !child.0.is_null() {
-            DEFVIEW_FOUND.store(true, Ordering::Relaxed);
-        }
+    if let Ok(child) = unsafe { FindWindowExW(Some(hwnd), None, w!("SHELLDLL_DefView"), None) }
+        && !child.0.is_null()
+    {
+        DEFVIEW_FOUND.store(true, Ordering::Relaxed);
     }
     BOOL(1)
 }
