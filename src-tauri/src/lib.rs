@@ -115,7 +115,8 @@ fn update_watch(state: tauri::State<Arc<AppState>>, id: String, title: Option<St
     state.config.lock().unwrap().clone()
 }
 
-// 管理窗口：已存在则唤起，否则新建 720x560
+// 管理窗口在 tauri.conf.json 静态声明（visible:false），这里只负责唤起；
+// 运行时建窗在 Windows 上有白屏/不渲染的毛病，故不走 WebviewWindowBuilder
 #[tauri::command]
 fn open_manage(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("manage") {
@@ -123,19 +124,7 @@ fn open_manage(app: tauri::AppHandle) -> Result<(), String> {
         let _ = w.set_focus();
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(
-        &app,
-        "manage",
-        tauri::WebviewUrl::App("manage.html".into()),
-    )
-    .title("监听管理 - GitHub 通知")
-    .inner_size(720.0, 560.0)
-    .min_inner_size(600.0, 440.0)
-    .resizable(true)
-    .center()
-    .build()
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    Err("管理窗口未初始化".into())
 }
 
 #[tauri::command]
