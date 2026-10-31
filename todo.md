@@ -19,7 +19,11 @@
   - 需求：① 通知支持已读/未读状态；② 悬挂机制——主界面最多悬挂 3 条通知；③ 统计功能——按 owner/repo 或 owner/repo/#issue/pr 维度统计每个通知类型出现次数；④ 新增「查看统计」入口（按钮）。
 - [x] **首次使用默认监听 microsoft/vscode**（完成 2026-10-31 @worktree/first-watch，已合并 master 08ee58d）
   - 实现：lib.rs setup 中检测 config.json 不存在 → 预置 microsoft/vscode 仓库级监听（issues+prs）并立即落盘。clippy -D warnings 零警告。
-- [~] **仓库级监听配置增强：关 Issue / 关 PR 事件 + 默认勾选调整**（执行中 @master工作区直改，2026-10-31，主人指定不走 worktree）
+- [x] **仓库级监听配置增强：关 Issue / 关 PR 事件 + 默认勾选调整**（完成 2026-10-31 @master工作区直改，未提交待验收）
+  - 后端：Watch 加 `closed_issues`/`closed_prs`（serde default 向后兼容），Config 加 `cursor_closed` 游标；github.rs 新增 `poll_closed`——拉 `state=closed&sort=updated`，按 **closed_at** 游标过滤（评论等 updated_at 变化不会误报），kind 为 `closed_issue`/`closed_pr`；add_watch 参数与校验扩展，remove_watch 清游标。
+  - 前端：添加表单新增「关 Issue」「关 PR」勾选框，新 Issue/PR/Release/关Issue/关PR 全默认勾选（Release 由不勾改勾）；管理列表徽标、事件流 KIND_LABEL、kind 配色（灰系）同步。
+  - 注意：首次运行预置的 microsoft/vscode 保持 issues+prs 不变（未开关闭/release 监听）。clippy -D warnings 零警告；旧配置里已有监听的 closed_issues/closed_prs 为 false，需手动编辑才开启（暂无编辑勾选入口，如需要可加）。
+  - 待主人目视确认：添加表单勾选框布局、事件卡「关Issue/关PR」标签颜色。
   - 需求：① 仓库级监听增加「关 Issue」「关 PR」两类事件；② 新增监听的默认勾选：关 Issue、关 PR、Release 均默认勾选。
 - [ ] Explorer 重启后嵌入窗口的父级失效处理（检测父窗口销毁 → 自动重嵌）。
 - [ ] 嵌入模式下键盘输入验证：PAT 输入框在 WorkerW 子窗口里能否正常打字（概念对话里的已知坑，待主人实测）。
