@@ -67,9 +67,11 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
+    // 只在内存里流转，实际存储走 Windows 凭据管理器（save_token/load_token）
+    #[serde(skip)]
     pub token: Option<String>,
     pub proxy: Option<String>, // 例如 http://127.0.0.1:7890；空则走系统代理
     #[serde(default = "default_true")]
@@ -102,4 +104,24 @@ pub fn save(path: &PathBuf, cfg: &Config) {
     }
     let json = serde_json::to_string_pretty(cfg).unwrap_or_default();
     let _ = fs::write(path, json);
+}
+
+const CRED_SERVICE: &str = "GitHubReminder";
+const CRED_USER: &str = "pat";
+
+pub fn load_token() -> Option<String> {
+    let entry = keyring::Entry::new(CRED_SERVICE, CRED_USER).ok()?;
+    entry.get_password().ok().filter(|s| !s.is_empty())
+}
+
+pub fn save_token(token: Option<&str>) -> Result<(), String> {
+    let entry = keyring::Entry::new(CRED_SERVICE, CRED_USER).map_err(|e| e.to_string())?;
+    match token {
+        Some(s) => entry.set_password(s).map_err(|e| e.to_string()),
+        None => match entry.delete_credential() {
+            // 本来就没存过也算删除成功
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        },
+    }
 }

@@ -55,10 +55,11 @@ fn get_config(state: tauri::State<Arc<AppState>>) -> Config {
 }
 
 #[tauri::command]
-fn set_token(state: tauri::State<Arc<AppState>>, token: Option<String>) -> Config {
+fn set_token(state: tauri::State<Arc<AppState>>, token: Option<String>) -> Result<Config, String> {
     let t = token.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    store::save_token(t.as_deref())?;
     state.with_config(|cfg| cfg.token = t);
-    state.config.lock().unwrap().clone()
+    Ok(state.config.lock().unwrap().clone())
 }
 
 // tauri 命令参数需平铺供前端 invoke，不收拢为结构体

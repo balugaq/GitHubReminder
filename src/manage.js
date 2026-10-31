@@ -320,7 +320,12 @@ function updateTokenState() {
 
 document.getElementById("input-token").addEventListener("change", async (e) => {
   const val = e.target.value.trim();
-  config = await invoke("set_token", { token: val || null });
+  try {
+    config = await invoke("set_token", { token: val || null });
+  } catch (err) {
+    // 凭据管理器写入失败时 token 不会被改动，提示后让用户重试
+    alert("保存令牌失败：" + err);
+  }
   updateTokenState();
 });
 

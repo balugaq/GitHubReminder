@@ -26,8 +26,12 @@
   - 待主人目视确认：添加表单勾选框布局、事件卡「关Issue/关PR」标签颜色。
   - 需求：① 仓库级监听增加「关 Issue」「关 PR」两类事件；② 新增监听的默认勾选：关 Issue、关 PR、Release 均默认勾选。
 - [ ] Explorer 重启后嵌入窗口的父级失效处理（检测父窗口销毁 → 自动重嵌）。
-- [ ] 嵌入模式下键盘输入验证：PAT 输入框在 WorkerW 子窗口里能否正常打字（概念对话里的已知坑，待主人实测）。
-- [ ] PAT 明文存储 → 迁移到 Windows 凭据管理器加密（当前存 config.json）。
+- [x] **嵌入模式下键盘输入验证**（完成 2026-10-31，主人实测 PAT 输入框在 WorkerW 子窗口中可正常打字）。
+- [x] **PAT 明文存储 → 迁移到 Windows 凭据管理器加密**（完成 2026-10-31 @master工作区直改，未提交待验收）
+  - 实现：Config.token 改 `#[serde(skip)]`（内存持有，config.json 不再落明文）；store.rs 新增 save_token/load_token 走 keyring 3（windows-native 凭据管理器，服务名 GitHubReminder/账户 pat）。
+  - 迁移：启动时检测 config.json 里的旧明文 token → 写入凭据管理器并打印日志；写失败则本次会话仅内存保留（不回写磁盘）。凭据管理器读不到时回退会话内存值。
+  - set_token 改为 Result，凭据写入失败时报错给前端（manage.js alert 提示，原值不动）。
+  - clippy -D warnings 零警告。待主人实测：重启后通知/轮询正常（token 从凭据管理器恢复）。
 
 ## 里程碑
 - [x] M1 骨架：透明窗口 / 引导页 / 设置页 / 0.5s 上浮动画
