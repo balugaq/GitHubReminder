@@ -43,8 +43,11 @@ for (const btn of document.querySelectorAll(".tab-btn")) {
 
 // ---- 数据 ----
 let config = { token: null, watches: [] };
-let activeGroup = "all"; // all | single | repo:<owner/name>
+// all | single | owner:<owner> | repo:<owner/name>
+let activeGroup = "all";
 let sortDesc = true;
+// owner 展开状态跨会话记忆
+let expandedOwners = new Set(loadSettings().expandedOwners || []);
 
 async function refreshConfig() {
   config = await invoke("get_config");
@@ -58,15 +61,15 @@ function watchBadges(w) {
   if (w.number != null) {
     return [
       w.comments ? ["b-comment", "新评论"] : null,
-      w.state_change ? ["b-state", "状态变更"] : null,
+      w.stateChange ? ["b-state", "状态变更"] : null,
     ].filter(Boolean);
   }
   return [
     w.issues ? ["b-issue", "新 Issue"] : null,
     w.prs ? ["b-pr", "新 PR"] : null,
     w.releases ? ["b-release", "新 Release"] : null,
-    w.closed_issues ? ["b-state", "关 Issue"] : null,
-    w.closed_prs ? ["b-state", "关 PR"] : null,
+    w.closedIssues ? ["b-state", "关 Issue"] : null,
+    w.closedPrs ? ["b-state", "关 PR"] : null,
   ].filter(Boolean);
 }
 
@@ -74,10 +77,16 @@ function groupKey(w) {
   return w.number != null ? "single" : `repo:${w.repo}`;
 }
 
-function groupLabel(key) {
-  if (key === "all") return "全部";
-  if (key === "single") return "🔖 单条监听";
-  return key.slice(5);
+function watchInGroup(w, group) {
+  if (group === "all") return true;
+  if (group === "single") return w.number != null;
+  if (group.startsWith("owner:")) return w.number == null && w.repo.split("/")[0] === group.slice(6);
+  if (group.startsWith("repo:")) return w.number == null && w.repo === group.slice(5);
+  return false;
+}
+
+function saveExpandedOwners() {
+  saveSettings({ expandedOwners: [...expandedOwners] });
 }
 
 function timeAgo(unixSecs) {
@@ -93,28 +102,40 @@ function render() {
   const q = document.getElementById("manage-search").value.trim().toLowerCase();
   const items = config.watches
     .filter((w) => {
-      const inGroup =
-        activeGroup === "all" || groupKey(w) === activeGroup;
+      const inGroup = watchInGroup(w, activeGroup);
       const hay = `${w.repo} ${w.title || ""}`.toLowerCase();
       return inGroup && (!q || hay.includes(q));
     })
     .sort((a, b) => (sortDesc ? b.created - a.created : a.created - b.created));
   document.getElementById("btn-sort").textContent = sortDesc ? "↓ 最近添加" : "↑ 最早添加";
 
-  // 分组导航
-  const counts = new Map();
+  // 分组导航：owner 一级可展开，展开后列出该 owner 的仓库级监听
+  const owners = new Map(); // owner -> Map(repo -> count)
+  let singleCount = 0;
   for (const w of config.watches) {
-    const k = groupKey(w);
-    counts.set(k, (counts.get(k) || 0) + 1);
+    if (w.number != null) {
+      singleCount++;
+      continue;
+    }
+    const [owner, repo] = w.repo.split("/");
+    if (!owners.has(owner)) owners.set(owner, new Map());
+    const repos = owners.get(owner);
+    repos.set(repo, (repos.get(repo) || 0) + 1);
   }
   const nav = document.getElementById("group-nav");
   nav.innerHTML = `<div class="nav-label">项目分组</div>`;
-  const mkGroup = (key, cnt) => {
+  const mkNavRow = ({ key, label, cnt, className = "group-item", expandable = null }) => {
     const el = document.createElement("div");
-    el.className = "group-item" + (activeGroup === key ? " active" : "");
+    el.className = `${className}${activeGroup === key ? " active" : ""}`;
+    if (expandable !== null) {
+      const arrow = document.createElement("span");
+      arrow.className = "owner-arrow";
+      arrow.textContent = expandable ? "▾" : "▸";
+      el.appendChild(arrow);
+    }
     const name = document.createElement("span");
-    name.textContent = groupLabel(key);
-    name.title = groupLabel(key);
+    name.textContent = label;
+    name.title = label;
     const badge = document.createElement("span");
     badge.className = "cnt";
     badge.textContent = cnt;
@@ -123,15 +144,46 @@ function render() {
       activeGroup = key;
       render();
     });
-    nav.appendChild(el);
+    return el;
   };
-  mkGroup("all", config.watches.length);
-  for (const [k, c] of counts) mkGroup(k, c);
+  nav.appendChild(mkNavRow({ key: "all", label: "全部", cnt: config.watches.length }));
+  nav.appendChild(mkNavRow({ key: "single", label: "🔖 单条监听", cnt: singleCount }));
+  for (const [owner, repos] of [...owners.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const ownerCount = [...repos.values()].reduce((a, b) => a + b, 0);
+    const expanded = expandedOwners.has(owner);
+    const row = mkNavRow({
+      key: `owner:${owner}`,
+      label: owner,
+      cnt: ownerCount,
+      expandable: expanded,
+    });
+    row.addEventListener("click", () => {
+      // 点 owner = 展开/收起并按 owner 过滤
+      if (expanded) expandedOwners.delete(owner);
+      else expandedOwners.add(owner);
+      saveExpandedOwners();
+      activeGroup = `owner:${owner}`;
+      render();
+    });
+    nav.appendChild(row);
+    if (expanded) {
+      for (const [repo, cnt] of [...repos.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        const full = `${owner}/${repo}`;
+        const sub = mkNavRow({ key: `repo:${full}`, label: repo, cnt, className: "group-item group-sub" });
+        sub.addEventListener("click", () => {
+          activeGroup = `repo:${full}`;
+          render();
+        });
+        nav.appendChild(sub);
+      }
+    }
+  }
 
   // 列表 / 空态
   const list = document.getElementById("manage-list");
   list.innerHTML = "";
-  document.getElementById("manage-stat").textContent = `共 ${items.length} 项监听 · ${counts.size} 个项目`;
+  document.getElementById("manage-stat").textContent =
+    `共 ${items.length} 项监听 · ${owners.size + (singleCount > 0 ? 1 : 0)} 个分组`;
 
   if (items.length === 0) {
     const empty = document.createElement("div");
@@ -183,8 +235,8 @@ function render() {
 
     const editBtn = document.createElement("button");
     editBtn.textContent = "✏️";
-    editBtn.title = "编辑显示名";
-    editBtn.addEventListener("click", () => startTitleEdit(row, w));
+    editBtn.title = "编辑监听设置";
+    editBtn.addEventListener("click", () => openEditForm(w));
     actions.appendChild(editBtn);
 
     const delBtn = document.createElement("button");
@@ -202,36 +254,93 @@ function render() {
   }
 }
 
-function startTitleEdit(row, w) {
-  const main = row.querySelector(".mg-main");
-  const nameEl = main.querySelector(".mg-name");
-  const input = document.createElement("input");
-  input.className = "title-input";
-  input.value = w.title || watchTitle(w);
-  input.placeholder = "留空恢复默认";
-  nameEl.replaceWith(input);
-  input.focus();
-  input.select();
+// ---- 编辑表单：显示名 + 勾选项（repo/number 不可改，后端 None = 不动） ----
+let editingId = null;
 
-  const commit = async () => {
-    config = await invoke("update_watch", { id: w.id, title: input.value });
-    render();
-  };
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") input.blur();
-    if (e.key === "Escape") {
-      input.value = w.title || "";
-      input.blur();
-    }
-  });
-  input.addEventListener("blur", commit);
+function openEditForm(w) {
+  editingId = w.id;
+  document.getElementById("edit-form").classList.remove("hidden");
+  document.getElementById("edit-error").classList.add("hidden");
+  document.getElementById("edit-title").value = w.title || "";
+  document.getElementById("edit-target").textContent =
+    `监听对象：${w.repo}${w.number != null ? ` #${w.number}` : ""}`;
+  const isRepo = w.number == null;
+  document.getElementById("edit-repo-options").classList.toggle("hidden", !isRepo);
+  document.getElementById("edit-item-options").classList.toggle("hidden", isRepo);
+  const setChk = (id, v) => (document.getElementById(id).checked = !!v);
+  setChk("edit-chk-issues", w.issues);
+  setChk("edit-chk-prs", w.prs);
+  setChk("edit-chk-releases", w.releases);
+  setChk("edit-chk-closed-issues", w.closedIssues);
+  setChk("edit-chk-closed-prs", w.closedPrs);
+  setChk("edit-chk-comments", w.comments);
+  setChk("edit-chk-state", w.stateChange);
+  document.getElementById("edit-form").scrollIntoView({ block: "nearest" });
 }
+
+function toggleEditForm(show) {
+  document.getElementById("edit-form").classList.toggle("hidden", !show);
+  editingId = null;
+}
+
+// 不适用的那一组传 null（后端不动它），适用的那组传当前勾选
+document.getElementById("btn-edit-save").addEventListener("click", async () => {
+  if (!editingId) return;
+  const errEl = document.getElementById("edit-error");
+  const isRepo = !document.getElementById("edit-repo-options").classList.contains("hidden");
+  const g = (id) => document.getElementById(id).checked;
+  try {
+    config = await invoke("update_watch", {
+      id: editingId,
+      title: document.getElementById("edit-title").value,
+      ...(isRepo
+        ? {
+            issues: g("edit-chk-issues"),
+            prs: g("edit-chk-prs"),
+            releases: g("edit-chk-releases"),
+            closedIssues: g("edit-chk-closed-issues"),
+            closedPrs: g("edit-chk-closed-prs"),
+          }
+        : {
+            comments: g("edit-chk-comments"),
+            stateChange: g("edit-chk-state"),
+          }),
+    });
+    emit("ghr-config-changed").catch(() => {});
+    toggleEditForm(false);
+    render();
+  } catch (err) {
+    errEl.textContent = String(err);
+    errEl.classList.remove("hidden");
+  }
+});
+
+document.getElementById("btn-edit-cancel").addEventListener("click", () => toggleEditForm(false));
 
 // ---- 监听 tab 控件 ----
 document.getElementById("manage-search").addEventListener("input", render);
 document.getElementById("btn-sort").addEventListener("click", () => {
   sortDesc = !sortDesc;
   render();
+});
+
+// 回补最近 14 天内创建、当前仍 open 的 Issue/PR，补进事件流并发通知
+document.getElementById("btn-backfill").addEventListener("click", async (e) => {
+  const btn = e.target;
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = "⟳ 回补中…";
+  try {
+    const n = await invoke("backfill_14d");
+    btn.textContent = n > 0 ? `✓ 已回补 ${n} 条` : "✓ 无需回补";
+    setTimeout(() => { btn.textContent = old; }, 3000);
+  } catch (err) {
+    alert(`回补失败：${err}`);
+    btn.textContent = old;
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 // ---- 内嵌添加表单（原主窗口添加页迁入） ----
@@ -315,6 +424,7 @@ function updateTokenState() {
   }
   document.getElementById("input-proxy").value = config.proxy || "";
   document.getElementById("input-notify").checked = config.notify !== false;
+  document.getElementById("input-poll-interval").value = config.pollInterval || 60;
   document.getElementById("input-qq-notify").checked = config.qqNotify === true;
   document.getElementById("input-qq-port").value = config.qqRelayPort || "";
   document.getElementById("input-qq-appid").value = config.qqAppId || "";
@@ -325,10 +435,14 @@ function updateTokenState() {
   document.getElementById("input-topmost").checked = loadSettings().topmost || false;
 }
 
-// QQ 互联开关关着时收起链接输入和自动配置
+// QQ 互联开关关着收起整块；凭证只有自动配置开启时才需要（外部服务模式下由外部持有）
 function updateQqNotifyVisibility() {
   const extra = document.getElementById("qq-notify-extra");
-  if (extra) extra.classList.toggle("hidden", document.getElementById("input-qq-notify").checked !== true);
+  const creds = document.getElementById("qq-credentials");
+  const notifyOn = document.getElementById("input-qq-notify").checked === true;
+  const autoOn = document.getElementById("input-qq-autoconfig").checked === true;
+  if (extra) extra.classList.toggle("hidden", !notifyOn);
+  if (creds) creds.classList.toggle("hidden", !(notifyOn && autoOn));
 }
 
 document.getElementById("input-token").addEventListener("change", async (e) => {
@@ -348,6 +462,16 @@ document.getElementById("input-proxy").addEventListener("change", async (e) => {
 
 document.getElementById("input-notify").addEventListener("change", async (e) => {
   config = await invoke("set_notify", { notify: e.target.checked });
+});
+
+document.getElementById("input-poll-interval").addEventListener("change", async (e) => {
+  const v = parseInt(e.target.value, 10);
+  if (!Number.isInteger(v) || v <= 0) {
+    e.target.value = config.pollInterval || 60;
+    return;
+  }
+  config = await invoke("set_poll_interval", { secs: v });
+  e.target.value = config.pollInterval || 60;
 });
 
 document.getElementById("input-qq-notify").addEventListener("change", async (e) => {

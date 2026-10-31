@@ -131,6 +131,31 @@ pub async fn send_to_qq(cfg: &RelayCfg, text: &str) -> Result<usize, String> {
     Ok(sent)
 }
 
+// 走外部已有中转服务的 HTTP 端点推送（autoconfig 关闭时用，无需本应用持有凭证）；返回成功发送的分段数
+pub async fn post_to_relay(port: u16, text: &str) -> Result<usize, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!("http://localhost:{port}/send");
+    let mut sent = 0;
+    for p in split_text(text) {
+        let resp = client
+            .post(&url)
+            .json(&serde_json::json!({ "text": p }))
+            .send()
+            .await
+            .map_err(|e| format!("外部中转服务不可达: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("外部中转返回 HTTP {status} {body}"));
+        }
+        sent += 1;
+    }
+    Ok(sent)
+}
+
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

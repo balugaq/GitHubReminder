@@ -32,6 +32,14 @@
   - 事件推送不走 HTTP 回环，直调 qqrelay::send_to_qq；失败静默。旧「通知链接」设置项随 node 方案删除。
   - 注意：AppSecret 明文存 config.json（与原 js 硬编码同级风险，如需可后续进凭据管理器）。clippy -D warnings 零警告。
   - 待主人实测：设置四项 + 开自动配置 → 端口监听、curl POST /send 推到 QQ；新事件推 QQ。
+- [x] **五项改进：QQ配置显隐/监听频率/owner分组导航/编辑监听/关事件显示**（完成 2026-10-31 @master工作区直改，未提交待验收）
+  - ① QQ 机器人端口/凭证改为开启「内置自动配置」才显示（#qq-credentials 二级收起）。
+  - ② 监听频率开放设置：Config.poll_interval（默认 60，运行时夹 [10,3600]，轮循每轮重读改完即生效）；设置页输入框；主窗口空态文案动态化。
+  - ③ 左侧导航改为 owner 一级分组（▾ 可展开）→ 展开列出该 owner 下仓库级监听（缩进子项）；单条监听独立分组；展开状态存 localStorage；activeGroup 新增 owner:<owner> 语义。
+  - ④ 编辑监听：✏️ 打开编辑表单（显示名留空=恢复默认 + 全部勾选项），repo/number 不可改；后端 update_watch 扩展全字段（None=不动），保存校验仓库级五选一/单条级二选一。
+  - ⑤ 关 Issue/PR 显示排查：渲染链路（KIND_LABEL/buildCard/CSS 配色）本来就没缺，根因是老监听改不了勾选 + add_watch 同 repo 去重导致关事件从未被轮询——④即解药，无额外代码。
+  - clippy -D warnings 零警告。视觉待主人目视确认。
+  - 修正（同日二轮）：① Watch 序列化是 camelCase，JS 误读 snake_case 的 closed_issues/closed_prs/state_change 恒 undefined → 编辑表单勾选不回显、列表徽标不出现（老 3 项 issues/prs/releases 碰巧两写法同名才正常）；已统一改读 closedIssues/closedPrs/stateChange。② 「全部」「单条监听」导航行漏绑 click 无响应；已把点击处理收敛进 mkNavRow。
 - [ ] Explorer 重启后嵌入窗口的父级失效处理（检测父窗口销毁 → 自动重嵌）。
 - [x] **嵌入模式下键盘输入验证**（完成 2026-10-31，主人实测 PAT 输入框在 WorkerW 子窗口中可正常打字）。
 - [x] **PAT 明文存储 → 迁移到 Windows 凭据管理器加密**（完成 2026-10-31 @master工作区直改，未提交待验收）  - 实现：Config.token 改 `#[serde(skip)]`（内存持有，config.json 不再落明文）；store.rs 新增 save_token/load_token 走 keyring 3（windows-native 凭据管理器，服务名 GitHubReminder/账户 pat）。

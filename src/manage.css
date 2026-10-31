@@ -72,17 +72,47 @@
   margin-bottom: 12px;
   animation: fadeUp 0.3s ease-out;
 }
-#input-target {
+/* 文本类输入框统一风格（管理窗口：添加 / 编辑 / 设置） */
+#add-form input[type="text"],
+#edit-form input[type="text"],
+#tab-settings input[type="text"],
+#tab-settings input[type="password"],
+#tab-settings input[type="number"],
+#tab-settings input[type="search"],
+#tab-settings input[type="url"] {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.3);
   color: #e8eaf0;
   font-size: 13px;
+  max-width: 560px;
   user-select: text;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-#input-target:focus { border-color: var(--accent); outline: none; }
+#add-form input[type="text"]:focus,
+#edit-form input[type="text"]:focus,
+#tab-settings input[type="text"]:focus,
+#tab-settings input[type="password"]:focus,
+#tab-settings input[type="number"]:focus,
+#tab-settings input[type="search"]:focus,
+#tab-settings input[type="url"]:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+#add-form input::placeholder,
+#edit-form input::placeholder,
+#tab-settings input::placeholder { color: var(--dim); }
+
+/* 添加 / 编辑表单的勾选框也用主题强调色 */
+#add-form input[type="checkbox"],
+#edit-form input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+}
 #add-form .btn-row { gap: 10px; align-items: center; }
 
 /* macOS 主按钮 */
@@ -174,6 +204,14 @@
   flex-shrink: 0;
 }
 
+/* owner 可展开行 + 展开后的 repo 子项 */
+.owner-arrow { flex-shrink: 0; width: 12px; font-size: 10px; color: var(--dim); }
+.group-sub {
+  padding-left: 28px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
 #manage-list { flex: 1; overflow-y: auto; min-width: 0; }
 
 /* 监听行卡片 */
@@ -259,20 +297,7 @@
 }
 .manage-footer .btn-primary { padding: 7px 18px; font-size: 12.5px; }
 
-/* 设置 tab 输入框统一风格 */
-#tab-settings input[type="text"],
-#tab-settings input[type="password"] {
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.3);
-  color: #e8eaf0;
-  font-size: 13px;
-  max-width: 560px;
-  user-select: text;
-}
-#tab-settings input[type="text"]:focus,
-#tab-settings input[type="password"]:focus { border-color: var(--accent); outline: none; }
+/* 设置 tab 专属控件（文本类已由上方统一规则覆盖） */
 #tab-settings input[type="color"] { width: 56px; height: 30px; border: none; border-radius: 6px; background: transparent; cursor: pointer; }
 #tab-settings input[type="range"] { accent-color: var(--accent); max-width: 280px; }
 #tab-settings input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }

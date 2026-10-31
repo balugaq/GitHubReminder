@@ -75,6 +75,9 @@ pub struct Config {
     pub proxy: Option<String>, // 例如 http://127.0.0.1:7890；空则走系统代理
     #[serde(default = "default_true")]
     pub notify: bool, // 新事件时弹系统 Toast
+    // 轮询间隔秒数；None/0 视为默认 60，运行时夹到 [10, 3600]
+    #[serde(default)]
+    pub poll_interval: Option<u64>,
     // QQ 互联通知：内置中转服务（qqrelay.rs）推 QQ 私信，失败静默。
     // 全部无默认值，缺任一项则中转不启动、推送不发。
     #[serde(default)]

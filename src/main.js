@@ -121,7 +121,7 @@ function renderFeed() {
   const empty = document.createElement("p");
   empty.id = "feed-empty";
   empty.className = "hint";
-  empty.textContent = "暂无新事件。轮询每 60 秒一次，有新动态会自动浮现。";
+  empty.textContent = `暂无新事件。轮询每 ${config.pollInterval || 60} 秒一次，有新动态会自动浮现。`;
   if (allEvents.length === 0) {
     feed.appendChild(empty);
     return;
@@ -202,9 +202,6 @@ document.getElementById("btn-settings").addEventListener("click", () => {
 document.getElementById("btn-guide-start").addEventListener("click", () => {
   invoke("open_manage").catch((err) => console.warn("打开管理窗口失败:", err));
 });
-document.getElementById("btn-add-watch").addEventListener("click", () => {
-  invoke("open_manage").catch((err) => console.warn("打开管理窗口失败:", err));
-});
 document.getElementById("btn-stats").addEventListener("click", () => openStats());
 document.getElementById("btn-stats-back").addEventListener("click", () => goDefaultView());
 
@@ -247,10 +244,7 @@ function applyWindowMode() {
   await loadEvents();
   goDefaultView();
 
-  // 无任何监听时自动打开管理窗口引导用户添加
-  if (!config.watches || config.watches.length === 0) {
-    invoke("open_manage").catch(() => {});
-  }
+  // 首次启动引导改由主窗口引导页承担，不再自动弹出管理窗口
   // 启动竞态兜底：配置在两窗口同时初始化期间可能未就绪
   setTimeout(syncFromRust, 1500);
   window.addEventListener("focus", syncFromRust);

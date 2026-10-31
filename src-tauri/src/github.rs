@@ -392,6 +392,71 @@ async fn poll_closed(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> R
     Ok(events)
 }
 
+/// 回补：把各仓库级监听里最近 14 天内创建、当前仍 open 的 Issue/PR 全部作为事件返回。
+/// 不动任何游标（这些条目 created_at 早于游标，后续正常轮询不会重复报）。
+pub async fn backfill_open_14d(cfg: &Config) -> Result<Vec<Event>, String> {
+    let client = client(cfg)?;
+    let since = (chrono::Utc::now() - chrono::Duration::days(14))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let mut events = Vec::new();
+    let mut first_err: Option<String> = None;
+    for w in &cfg.watches {
+        // 单条监听不走回补；仓库级至少要开了 issue 或 pr 之一
+        if w.number.is_some() || !(w.issues || w.prs) {
+            continue;
+        }
+        let url = format!(
+            "https://api.github.com/repos/{}/issues?state=open&sort=created&direction=desc&per_page=100",
+            w.repo
+        );
+        let items: Vec<Issue> = match client.get(&url).send().await {
+            Ok(r) => match r.error_for_status() {
+                Ok(r) => match r.json().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        if first_err.is_none() { first_err = Some(format!("{}: {e}", w.repo)); }
+                        continue;
+                    }
+                },
+                Err(e) => {
+                    if first_err.is_none() { first_err = Some(format!("{}: {e}", w.repo)); }
+                    continue;
+                }
+            },
+            Err(e) => {
+                if first_err.is_none() { first_err = Some(format!("{}: {e}", w.repo)); }
+                continue;
+            }
+        };
+        let mut n = 0;
+        for i in items {
+            // API 的 since 只按 updated 过滤，创建时间要自己卡 14 天
+            if i.created_at < since {
+                break; // 按 created 倒序，到这里都是 14 天前的了
+            }
+            let is_pr = i.pull_request.is_some();
+            if (is_pr && !w.prs) || (!is_pr && !w.issues) {
+                continue;
+            }
+            events.push(Event {
+                kind: if is_pr { "pr" } else { "issue" }.into(),
+                repo: w.repo.clone(),
+                number: Some(i.number),
+                title: i.title,
+                url: i.html_url,
+                created_at: i.created_at,
+            });
+            n += 1;
+        }
+        println!("[backfill {}] {}: 回补 {} 条", now_str(), w.repo, n);
+    }
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(events),
+    }
+}
+
 async fn poll_release(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> Result<Option<Event>, String> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", w.repo);
     let rel: Release = match client.get(&url).send().await {

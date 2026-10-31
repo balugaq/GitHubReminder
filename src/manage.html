@@ -55,10 +55,42 @@
           </div>
         </div>
 
+        <!-- 内嵌编辑表单：改显示名 + 勾选项（repo/number 不可改） -->
+        <div id="edit-form" class="hidden">
+          <div class="form-row">
+            <label for="edit-title">显示名（留空恢复默认）</label>
+            <input id="edit-title" type="text" />
+            <p class="hint" id="edit-target"></p>
+          </div>
+          <div class="form-row hidden" id="edit-repo-options">
+            <label>监听内容（仓库级）</label>
+            <div class="check-row">
+              <label><input type="checkbox" id="edit-chk-issues" /> 新 Issue</label>
+              <label><input type="checkbox" id="edit-chk-prs" /> 新 PR</label>
+              <label><input type="checkbox" id="edit-chk-releases" /> 新 Release</label>
+              <label><input type="checkbox" id="edit-chk-closed-issues" /> 关 Issue</label>
+              <label><input type="checkbox" id="edit-chk-closed-prs" /> 关 PR</label>
+            </div>
+          </div>
+          <div class="form-row hidden" id="edit-item-options">
+            <label>监听内容（单条颗粒度）</label>
+            <div class="check-row">
+              <label><input type="checkbox" id="edit-chk-comments" /> 新评论</label>
+              <label><input type="checkbox" id="edit-chk-state" /> 状态开关变更</label>
+            </div>
+          </div>
+          <p id="edit-error" class="error-text hidden"></p>
+          <div class="btn-row" style="margin-bottom: 12px;">
+            <button id="btn-edit-save" class="btn-primary">保存</button>
+            <button id="btn-edit-cancel" class="btn-plain" style="margin-top: 0;">取消</button>
+          </div>
+        </div>
+
         <div class="toolbar">
           <div class="search-box">
             <input id="manage-search" type="text" placeholder="🔍 搜索仓库 / 单条目标…" />
           </div>
+          <button id="btn-backfill" class="sort-btn" title="把最近 14 天内创建、当前仍开启的 Issue/PR 全部补进事件流并通知">⟳ 回补14天</button>
           <button id="btn-sort" class="sort-btn" title="切换排序">↓ 最近添加</button>
         </div>
 
@@ -89,6 +121,11 @@
           <p class="hint">只需要 <code>repo</code>（或只读 notifications）权限。未配置也能用，但 API 限流 60 次/小时。</p>
         </div>
         <div class="form-row fade-up delay-1">
+          <label for="input-poll-interval">监听频率（秒）</label>
+          <input id="input-poll-interval" type="number" min="10" max="3600" placeholder="默认 60" />
+          <p class="hint">轮询 GitHub 的间隔，改完下轮生效；最小 10 秒，太小容易触发 API 限流。</p>
+        </div>
+        <div class="form-row fade-up delay-1">
           <label for="input-color">背景颜色</label>
           <input id="input-color" type="color" value="#4a90d9" />
         </div>
@@ -110,27 +147,29 @@
           <input id="input-qq-notify" type="checkbox" />
         </div>
         <div id="qq-notify-extra" class="hidden">
-          <div class="form-row fade-up">
-            <label for="input-qq-port">中转服务端口</label>
-            <input id="input-qq-port" type="number" min="1" max="65535" placeholder="无默认值，必填（例如 18899）" />
-          </div>
-          <div class="form-row fade-up">
-            <label for="input-qq-appid">QQ 机器人 AppID</label>
-            <input id="input-qq-appid" type="text" placeholder="无默认值，必填" />
-          </div>
-          <div class="form-row fade-up">
-            <label for="input-qq-secret">QQ 机器人 AppSecret</label>
-            <input id="input-qq-secret" type="password" placeholder="无默认值，必填" />
-          </div>
-          <div class="form-row fade-up">
-            <label for="input-qq-openid">私信目标 OpenID</label>
-            <input id="input-qq-openid" type="text" placeholder="无默认值，必填" />
-            <p class="hint">通过 QQ 机器人（Astrbot 协议）把新事件推送到 QQ 私信，消息以 [GitHubReminder] 开头。四项全部填写才生效。</p>
-          </div>
           <div class="form-row toggle-row fade-up">
             <label class="toggle-label" for="input-qq-autoconfig">内置 QQ 互联自动配置</label>
             <input id="input-qq-autoconfig" type="checkbox" />
             <span class="hint-inline">开启 = 本应用启动内置中转服务；关闭 = 外部已有服务在跑，只发推送</span>
+          </div>
+          <div class="form-row fade-up">
+            <label for="input-qq-port">中转服务端口</label>
+            <input id="input-qq-port" type="number" min="1" max="65535" placeholder="无默认值，必填（例如 18899）" />
+          </div>
+          <div id="qq-credentials" class="hidden">
+            <div class="form-row fade-up">
+              <label for="input-qq-appid">QQ 机器人 AppID</label>
+              <input id="input-qq-appid" type="text" placeholder="无默认值，必填" />
+            </div>
+            <div class="form-row fade-up">
+              <label for="input-qq-secret">QQ 机器人 AppSecret</label>
+              <input id="input-qq-secret" type="password" placeholder="无默认值，必填" />
+            </div>
+            <div class="form-row fade-up">
+              <label for="input-qq-openid">私信目标 OpenID</label>
+              <input id="input-qq-openid" type="text" placeholder="无默认值，必填" />
+              <p class="hint">仅内置自动配置需要凭证。通过 QQ 机器人把新事件推送到 QQ 私信，消息以 [GitHubReminder] 开头。外部中转模式下由外部服务持有凭证，本应用只 POST 到上面的端口。</p>
+            </div>
           </div>
         </div>
         <div class="form-row toggle-row fade-up delay-3">

@@ -119,16 +119,93 @@ fn add_watch(
     Ok(state.config.lock().unwrap().clone())
 }
 
+// 编辑监听：repo/number 不可改，其余字段 None = 不动；保存后校验至少勾选一项
+// tauri 命令参数需平铺供前端 invoke，不收拢为结构体
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-fn update_watch(state: tauri::State<Arc<AppState>>, id: String, title: Option<String>) -> Config {
-    // 空串 = 恢复默认显示名
-    let title = title.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+fn update_watch(
+    state: tauri::State<Arc<AppState>>,
+    id: String,
+    title: Option<String>,
+    issues: Option<bool>,
+    prs: Option<bool>,
+    releases: Option<bool>,
+    closed_issues: Option<bool>,
+    closed_prs: Option<bool>,
+    comments: Option<bool>,
+    state_change: Option<bool>,
+) -> Result<Config, String> {
+    // 传了 title：非空设为自定义名，空串恢复默认（清掉）；没传 = 不动
+    let raw_title = title;
+    let title = raw_title
+        .clone()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let mut found = false;
+    let mut is_repo = false;
     state.with_config(|cfg| {
-        if let Some(w) = cfg.watches.iter_mut().find(|w| w.id == id) {
-            w.title = title;
+        let Some(w) = cfg.watches.iter_mut().find(|w| w.id == id) else {
+            return;
+        };
+        found = true;
+        is_repo = w.number.is_none();
+        if let Some(t) = title.clone() {
+            w.title = Some(t);
+        } else if raw_title.is_some() {
+            w.title = None;
+        }
+        if let Some(v) = issues {
+            w.issues = v;
+        }
+        if let Some(v) = prs {
+            w.prs = v;
+        }
+        if let Some(v) = releases {
+            w.releases = v;
+        }
+        if let Some(v) = closed_issues {
+            w.closed_issues = v;
+        }
+        if let Some(v) = closed_prs {
+            w.closed_prs = v;
+        }
+        if let Some(v) = comments {
+            w.comments = v;
+        }
+        if let Some(v) = state_change {
+            w.state_change = v;
         }
     });
-    state.config.lock().unwrap().clone()
+    // 至少一项：仓库级五选一，单条级二选一
+    if !found {
+        return Err("监听不存在".into());
+    }
+    if is_repo {
+        let ok = state
+            .config
+            .lock()
+            .unwrap()
+            .watches
+            .iter()
+            .find(|w| w.id == id)
+            .is_some_and(|w| w.issues || w.prs || w.releases || w.closed_issues || w.closed_prs);
+        if !ok {
+            return Err("仓库监听至少要勾选一项（Issue/PR/Release/关Issue/关PR）".into());
+        }
+    } else {
+        let ok = state
+            .config
+            .lock()
+            .unwrap()
+            .watches
+            .iter()
+            .find(|w| w.id == id)
+            .is_some_and(|w| w.comments || w.state_change);
+        if !ok {
+            return Err("单条监听至少要勾选一项（评论/状态变更）".into());
+        }
+    }
+    Ok(state.config.lock().unwrap().clone())
 }
 
 // 管理窗口在 tauri.conf.json 静态声明（visible:false），这里只负责唤起；
@@ -166,6 +243,12 @@ fn set_proxy(state: tauri::State<Arc<AppState>>, proxy: Option<String>) -> Confi
 #[tauri::command]
 fn set_notify(state: tauri::State<Arc<AppState>>, notify: bool) -> Config {
     state.with_config(|cfg| cfg.notify = notify);
+    state.config.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_poll_interval(state: tauri::State<Arc<AppState>>, secs: Option<u64>) -> Config {
+    state.with_config(|cfg| cfg.poll_interval = secs.filter(|s| *s > 0));
     state.config.lock().unwrap().clone()
 }
 
@@ -231,22 +314,36 @@ fn restart_relay(state: &AppState) {
     *state.relay.lock().unwrap() = Some(handle);
 }
 
-// 有新事件时直调内置推送（不走 HTTP 回环；配置不齐则静默跳过）
+// 有新事件时推送：自动配置开 = 直调内置中转（需端口+凭证齐全）；
+// 自动配置关 = POST 到外部已有中转服务（只需端口，凭证由外部服务持有）
 fn spawn_qq_push(cfg: &Config, events: &[github::Event]) {
     if !cfg.qq_notify || events.is_empty() {
         return;
     }
-    let Some(rc) = relay_cfg_of(cfg) else {
-        println!("[qq] QQ 凭证/端口未配全，跳过 QQ 推送");
-        return;
-    };
     let text = format!("[GitHubReminder]\n{}", toast_summary(events));
-    tauri::async_runtime::spawn(async move {
-        match qqrelay::send_to_qq(&rc, &text).await {
-            Ok(n) => println!("[qq] 已推送 {n} 段"),
-            Err(e) => println!("[qq] 推送失败（静默）: {e}"),
-        }
-    });
+    if cfg.qq_autoconfig {
+        let Some(rc) = relay_cfg_of(cfg) else {
+            println!("[qq] 自动配置开但端口/凭证未配全，跳过 QQ 推送");
+            return;
+        };
+        tauri::async_runtime::spawn(async move {
+            match qqrelay::send_to_qq(&rc, &text).await {
+                Ok(n) => println!("[qq] 已推送 {n} 段"),
+                Err(e) => println!("[qq] 推送失败（静默）: {e}"),
+            }
+        });
+    } else {
+        let Some(port) = cfg.qq_relay_port else {
+            println!("[qq] 外部中转端口未配置，跳过 QQ 推送");
+            return;
+        };
+        tauri::async_runtime::spawn(async move {
+            match qqrelay::post_to_relay(port, &text).await {
+                Ok(n) => println!("[qq] 经外部中转已推送 {n} 段"),
+                Err(e) => println!("[qq] 推送失败（静默）: {e}"),
+            }
+        });
+    }
 }
 
 #[tauri::command]
@@ -366,6 +463,34 @@ fn record_events(cfg: &mut Config, events: &[github::Event]) {
     }
 }
 
+// 回补最近 14 天内创建、当前仍 open 的 Issue/PR：落库 + 前端事件流 + QQ/系统通知（不走未读去重）
+#[tauri::command]
+async fn backfill_14d(app: tauri::AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result<u64, String> {
+    let st = state.inner().clone();
+    let cfg = st.config.lock().unwrap().clone();
+    let events = github::backfill_open_14d(&cfg).await?;
+    let count = events.len() as u64;
+    if count > 0 {
+        {
+            let mut c = st.config.lock().unwrap();
+            record_events(&mut c, &events);
+            store::save(&st.path, &c);
+        }
+        let _ = app.emit("ghr-events", &events);
+        let cur = st.config.lock().unwrap().clone();
+        spawn_qq_push(&cur, &events);
+        if cur.notify {
+            let _ = app
+                .notification()
+                .builder()
+                .title("GitHub 通知（14 天回补）")
+                .body(format!("[回补] {}", toast_summary(&events)))
+                .show();
+        }
+    }
+    Ok(count)
+}
+
 // 轮询 + 落盘 + 事件广播，轮循协程和手动刷新共用；返回完成时刻的 Unix 秒
 async fn do_poll(app: &tauri::AppHandle, state: &AppState) -> u64 {
     // 上一轮还没跑完就跳过本轮，避免两轮共用旧游标重复通知
@@ -456,9 +581,17 @@ fn spawn_visibility_guard(app: tauri::AppHandle) {
 
 fn spawn_poller(app: tauri::AppHandle, state: Arc<AppState>) {
     tauri::async_runtime::spawn(async move {
-        println!("[poll] 轮循协程已启动, 间隔 60 秒");
+        println!("[poll] 轮循协程已启动");
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            // 每轮重新读设置，改频率无需重启应用；下限 10s 防 API 限流
+            let secs = state
+                .config
+                .lock()
+                .unwrap()
+                .poll_interval
+                .unwrap_or(60)
+                .clamp(10, 3600);
+            tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
             do_poll(&app, &state).await;
         }
     });
@@ -581,6 +714,8 @@ pub fn run() {
             set_token,
             set_proxy,
             set_notify,
+            backfill_14d,
+            set_poll_interval,
             set_qq_notify,
             set_qq_settings,
             set_qq_autoconfig,
