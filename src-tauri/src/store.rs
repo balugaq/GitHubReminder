@@ -115,10 +115,24 @@ pub struct Config {
 }
 
 pub fn load(path: &PathBuf) -> Config {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    let raw = match fs::read_to_string(path) {
+        Ok(s) => s,
+        // 文件不存在 = 首次使用，静默走默认值
+        Err(_) => return Config::default(),
+    };
+    match serde_json::from_str(&raw) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            // 解析失败绝不能静默清空（会连带丢监听和通知）：先备份原文件再回退默认值
+            let backup = path.with_file_name("config.broken.json");
+            let _ = fs::copy(path, &backup);
+            eprintln!(
+                "[store] 配置解析失败，已备份到 {} 并回退默认值: {e}",
+                backup.display()
+            );
+            Config::default()
+        }
+    }
 }
 
 pub fn save(path: &PathBuf, cfg: &Config) {

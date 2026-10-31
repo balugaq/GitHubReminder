@@ -126,8 +126,9 @@ function buildCard(ev) {
   card.querySelector(".event-repo").textContent =
     ev.repo + (ev.number != null ? ` #${ev.number}` : "");
   card.querySelector(".event-title").textContent = ev.title;
+  // 后端实体字段是驼峰序列化（lastEventKind / updatedAt / state / status）
   card.querySelector(".event-sub").textContent =
-    (LAST_EVENT_LABEL[ev.last_event_kind] || ev.last_event_kind) +
+    (LAST_EVENT_LABEL[ev.lastEventKind] || ev.lastEventKind || "") +
     (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
   bindCard(card, ev);
   return card;
@@ -197,7 +198,7 @@ function renderFeed() {
     showHint(`暂无新事件。轮询每 ${config.pollInterval || 60} 秒一次，有新动态会自动浮现。`);
     return;
   }
-  // 后端已按 updated_at 降序，这里只按分类过滤
+  // 后端已按 updatedAt 降序，这里只按分类过滤
   const list = allEvents.filter((ev) => (ev.status || "unread") === activeStatus);
   if (list.length === 0) {
     showHint("该分类下还没有通知");

@@ -583,14 +583,24 @@ async fn do_poll(app: &tauri::AppHandle, state: &AppState) -> u64 {
 
 async fn do_poll_inner(app: &tauri::AppHandle, state: &AppState) -> u64 {
     let (events, err) = {
-        let mut cfg = state.config.lock().unwrap().clone();
-        let (events, err) = github::poll_all(&mut cfg).await;
-        if !events.is_empty() {
-            record_entities(&mut cfg, &events);
+        // 网络请求可能耗时十几秒，全程只改工作副本、不持锁；
+        // 拿到结果后只把「游标 + 本轮新实体」合并回内存配置，
+        // 不能整体覆盖——否则轮询期间用户改的状态/置顶/监听会被静默回滚
+        let mut work = state.config.lock().unwrap().clone();
+        let (events, err) = github::poll_all(&mut work).await;
+        {
+            let mut cfg = state.config.lock().unwrap();
+            cfg.cursor_issues = work.cursor_issues;
+            cfg.cursor_release = work.cursor_release;
+            cfg.cursor_comment = work.cursor_comment;
+            cfg.cursor_state = work.cursor_state;
+            cfg.cursor_closed = work.cursor_closed;
+            if !events.is_empty() {
+                record_entities(&mut cfg, &events);
+            }
+            // 无事件时游标仍可能变化，照常落盘（增量小，可接受）
+            store::save(&state.path, &cfg);
         }
-        // 只有游标可能变化，无事件时也照常落盘（增量小，可接受）
-        *state.config.lock().unwrap() = cfg;
-        store::save(&state.path, &state.config.lock().unwrap());
         (events, err)
     };
     if let Some(e) = err {
@@ -837,6 +847,17 @@ pub fn run() {
                 path.display(),
                 cfg.watches.len(),
                 if cfg.token.is_some() { "已设置" } else { "未设置" }
+            );
+            // 持久化可观测点：重启后这里应报出重启前的实体条数
+            let cnt = |s: &str| cfg.entities.iter().filter(|e| e.status == s).count();
+            println!(
+                "[init] 通知实体: {} 条（未读 {} / 已读 {} / 处理中 {} / 已完成 {}，置顶 {}）",
+                cfg.entities.len(),
+                cnt("unread"),
+                cnt("read"),
+                cnt("in_progress"),
+                cnt("done"),
+                cfg.entities.iter().filter(|e| e.pinned).count()
             );
             let state = Arc::new(AppState {
                 path,
