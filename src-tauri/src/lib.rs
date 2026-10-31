@@ -485,9 +485,18 @@ fn record_entities(cfg: &mut Config, events: &[github::Event]) {
     }
     let len = cfg.entities.len();
     if len > MAX_ENTITIES {
-        // 丢最旧（updated_at 最小）的，保留最近 200 条
+        // 丢最旧的，但跳过置顶卡（钉住的不该因为久远被挤掉）
         cfg.entities.sort_by(|a, b| a.updated_at.cmp(&b.updated_at));
-        cfg.entities.drain(..len - MAX_ENTITIES);
+        let mut excess = len - MAX_ENTITIES;
+        let mut i = 0;
+        while excess > 0 && i < cfg.entities.len() {
+            if cfg.entities[i].pinned {
+                i += 1;
+            } else {
+                cfg.entities.remove(i);
+                excess -= 1;
+            }
+        }
     }
 }
 
@@ -739,6 +748,42 @@ fn delete_event(
     sorted_entities(&state)
 }
 
+// 置顶（钉住）上限：主界面顶部最多横排 3 张
+const MAX_PINNED: usize = 3;
+
+// 右键菜单置顶/取消置顶；置顶数已满时拒绝，由前端提示
+#[tauri::command]
+fn set_pin(
+    state: tauri::State<Arc<AppState>>,
+    repo: String,
+    number: Option<u64>,
+    pinned: bool,
+) -> Result<Vec<Entity>, String> {
+    let mut err: Option<String> = None;
+    state.with_config(|cfg| {
+        let Some(idx) = cfg
+            .entities
+            .iter()
+            .position(|e| e.repo.eq_ignore_ascii_case(&repo) && e.number == number)
+        else {
+            err = Some("通知不存在".into());
+            return;
+        };
+        if pinned && !cfg.entities[idx].pinned {
+            let count = cfg.entities.iter().filter(|e| e.pinned).count();
+            if count >= MAX_PINNED {
+                err = Some(format!("最多钉 {MAX_PINNED} 个，请先取消一个"));
+                return;
+            }
+        }
+        cfg.entities[idx].pinned = pinned;
+    });
+    match err {
+        Some(e) => Err(e),
+        None => Ok(sorted_entities(&state)),
+    }
+}
+
 #[tauri::command]
 fn get_stats(
     state: tauri::State<Arc<AppState>>,
@@ -843,6 +888,7 @@ pub fn run() {
             get_events,
             set_status,
             delete_event,
+            set_pin,
             get_stats
         ])
         .run(tauri::generate_context!())

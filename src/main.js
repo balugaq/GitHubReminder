@@ -97,9 +97,25 @@ function entityKey(ev) {
   return `${(ev.repo || "").toLowerCase()}:${ev.number ?? ""}`;
 }
 
+// 卡片交互：点开链接（未读自动转已读）+ 右键菜单
+function bindCard(card, ev) {
+  card.addEventListener("click", (e) => {
+    e.preventDefault();
+    // 未读点开即已读（同 GitHub 通知收件箱）；处理中/已完成不自动改
+    if ((ev.status || "unread") === "unread") applyStatus(ev, "read");
+    window.__TAURI__.opener.openUrl(ev.url);
+  });
+  card.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu(ev, e.clientX, e.clientY);
+  });
+}
+
 function buildCard(ev) {
   const card = document.createElement("a");
   card.className = `event-card fade-up status-${ev.status || "unread"}`;
+  if (ev.pinned) card.classList.add("pinned");
   card.href = ev.url;
   card.dataset.key = entityKey(ev);
   card.innerHTML =
@@ -113,18 +129,36 @@ function buildCard(ev) {
   card.querySelector(".event-sub").textContent =
     (LAST_EVENT_LABEL[ev.last_event_kind] || ev.last_event_kind) +
     (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
-  card.addEventListener("click", (e) => {
-    e.preventDefault();
-    // 未读点开即已读（同 GitHub 通知收件箱）；处理中/已完成不自动改
-    if ((ev.status || "unread") === "unread") applyStatus(ev, "read");
-    window.__TAURI__.opener.openUrl(ev.url);
-  });
-  card.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    openContextMenu(ev, e.clientX, e.clientY);
-  });
+  bindCard(card, ev);
   return card;
+}
+
+// 置顶区的紧凑卡片：单行，横向排布
+function buildPinnedCard(ev) {
+  const card = document.createElement("a");
+  card.className = "pinned-card";
+  card.href = ev.url;
+  card.dataset.key = entityKey(ev);
+  card.title = `${ev.repo}${ev.number != null ? ` #${ev.number}` : ""} ${ev.title}`;
+  card.innerHTML =
+    `<span class="pin-mark">📌</span>` +
+    `<span class="event-kind kind-${ev.kind}">${KIND_LABEL[ev.kind] || ev.kind}</span>` +
+    `<span class="pinned-repo"></span>` +
+    `<span class="pinned-title"></span>`;
+  card.querySelector(".pinned-repo").textContent =
+    ev.repo + (ev.number != null ? ` #${ev.number}` : "");
+  card.querySelector(".pinned-title").textContent = ev.title;
+  bindCard(card, ev);
+  return card;
+}
+
+function renderPinned() {
+  const zone = document.getElementById("pinned-zone");
+  zone.innerHTML = "";
+  // 后端已限制最多 3 个，这里再兜一次底
+  for (const ev of allEvents.filter((e) => e.pinned).slice(0, 3)) {
+    zone.appendChild(buildPinnedCard(ev));
+  }
 }
 
 // ---- 状态分类 tab ----
@@ -147,6 +181,7 @@ function renderTabs() {
 }
 
 function renderFeed() {
+  renderPinned();
   renderTabs();
   const feed = document.getElementById("event-feed");
   const scrollTop = feed.scrollTop;
@@ -186,7 +221,18 @@ function renderFeed() {
   feed.scrollTop = scrollTop;
 }
 
-// ---- 状态变更 / 删除 / 复制 ----
+// ---- 状态变更 / 置顶 / 删除 / 复制 ----
+let flashTimer = null;
+
+// 轻提示：置顶已满、复制结果等，2.2s 自动消失
+function flash(text) {
+  const el = document.getElementById("float-msg");
+  el.textContent = text;
+  el.classList.remove("hidden");
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => el.classList.add("hidden"), 2200);
+}
+
 async function applyStatus(ev, status) {
   try {
     allEvents = await invoke("set_status", {
@@ -197,6 +243,20 @@ async function applyStatus(ev, status) {
     renderFeed();
   } catch (err) {
     console.warn("更新状态失败:", err);
+  }
+}
+
+// 置顶/取消置顶；超过 3 个时后端拒绝，这里把原因提示出来
+async function setPin(ev, pinned) {
+  try {
+    allEvents = await invoke("set_pin", {
+      repo: ev.repo,
+      number: ev.number ?? null,
+      pinned,
+    });
+    renderFeed();
+  } catch (err) {
+    flash(typeof err === "string" ? err : "置顶失败");
   }
 }
 
@@ -266,12 +326,16 @@ function openContextMenu(ev, x, y) {
   for (const [status, label] of statusItems) {
     addCtxItem(menu, label, () => applyStatus(ev, status), { checked: current === status });
   }
+  // 置顶（钉住）——第 4 张会被后端拒绝
+  addCtxItem(menu, ev.pinned ? "取消置顶" : "置顶", () => setPin(ev, !ev.pinned), {
+    checked: !!ev.pinned,
+  });
   const sep = document.createElement("div");
   sep.className = "ctx-sep";
   menu.appendChild(sep);
   addCtxItem(menu, "复制链接", async () => {
     const ok = await copyText(ev.url);
-    if (!ok) console.warn("复制失败:", ev.url);
+    flash(ok ? "已复制链接" : "复制失败");
   });
   addCtxItem(menu, "删除", () => deleteEntity(ev), { danger: true });
 

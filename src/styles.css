@@ -188,6 +188,71 @@ button { font-family: inherit; }
 .event-card.status-done { opacity: 0.5; }
 .event-card.status-in_progress { box-shadow: 0 0 0 1.5px rgba(255, 190, 80, 0.65) inset; }
 
+/* ---- 置顶区：最多 3 张横排（GitHub issues pinned 风格） ---- */
+#pinned-zone {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  flex-shrink: 0;
+}
+#pinned-zone:empty { display: none; }
+
+.pinned-card {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: var(--text);
+  text-decoration: none;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pinned-card:hover { background: rgba(0, 0, 0, 0.46); }
+.pin-mark { flex-shrink: 0; font-size: 9px; opacity: 0.85; }
+.pinned-card .event-kind { flex-shrink: 0; font-size: 9px; padding: 0 5px; }
+.pinned-repo {
+  flex-shrink: 0;
+  max-width: 40%;
+  font-size: 10.5px;
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pinned-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 列表里被钉住的卡片加个记号 */
+.event-card.pinned .event-kind::before { content: "📌"; margin-right: 3px; font-size: 9px; }
+
+/* 轻提示 */
+#float-msg {
+  position: fixed;
+  left: 50%;
+  bottom: 46px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  padding: 6px 14px;
+  border-radius: 14px;
+  background: rgba(20, 24, 34, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  font-size: 11.5px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* ---- 分类 tab ---- */
 #status-tabs {
   display: flex;
