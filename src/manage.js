@@ -315,7 +315,20 @@ function updateTokenState() {
   }
   document.getElementById("input-proxy").value = config.proxy || "";
   document.getElementById("input-notify").checked = config.notify !== false;
+  document.getElementById("input-qq-notify").checked = config.qqNotify === true;
+  document.getElementById("input-qq-port").value = config.qqRelayPort || "";
+  document.getElementById("input-qq-appid").value = config.qqAppId || "";
+  document.getElementById("input-qq-secret").value = config.qqAppSecret || "";
+  document.getElementById("input-qq-openid").value = config.qqOpenid || "";
+  document.getElementById("input-qq-autoconfig").checked = config.qqAutoconfig === true;
+  updateQqNotifyVisibility();
   document.getElementById("input-topmost").checked = loadSettings().topmost || false;
+}
+
+// QQ 互联开关关着时收起链接输入和自动配置
+function updateQqNotifyVisibility() {
+  const extra = document.getElementById("qq-notify-extra");
+  if (extra) extra.classList.toggle("hidden", document.getElementById("input-qq-notify").checked !== true);
 }
 
 document.getElementById("input-token").addEventListener("change", async (e) => {
@@ -335,6 +348,31 @@ document.getElementById("input-proxy").addEventListener("change", async (e) => {
 
 document.getElementById("input-notify").addEventListener("change", async (e) => {
   config = await invoke("set_notify", { notify: e.target.checked });
+});
+
+document.getElementById("input-qq-notify").addEventListener("change", async (e) => {
+  config = await invoke("set_qq_notify", { notify: e.target.checked });
+  updateQqNotifyVisibility();
+});
+
+// 端口/凭证任一改动都整包保存（后端按需重启内置中转）
+async function saveQqSettings() {
+  const portEl = document.getElementById("input-qq-port");
+  const port = parseInt(portEl.value, 10);
+  config = await invoke("set_qq_settings", {
+    port: Number.isInteger(port) && port > 0 && port <= 65535 ? port : null,
+    appId: document.getElementById("input-qq-appid").value.trim() || null,
+    appSecret: document.getElementById("input-qq-secret").value.trim() || null,
+    openid: document.getElementById("input-qq-openid").value.trim() || null,
+  });
+}
+
+["input-qq-port", "input-qq-appid", "input-qq-secret", "input-qq-openid"].forEach((id) => {
+  document.getElementById(id).addEventListener("change", saveQqSettings);
+});
+
+document.getElementById("input-qq-autoconfig").addEventListener("change", async (e) => {
+  config = await invoke("set_qq_autoconfig", { enable: e.target.checked });
 });
 
 document.getElementById("input-autostart").addEventListener("change", async (e) => {

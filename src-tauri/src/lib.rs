@@ -1,4 +1,5 @@
 mod github;
+mod qqrelay;
 mod store;
 mod winembed;
 
@@ -22,6 +23,8 @@ pub struct AppState {
     polling: AtomicBool,
     // 已弹过 toast 且用户还没读掉的 issue/PR（"repo#n"），点击已读后由 mark_read 清除
     notified: Mutex<HashSet<String>>,
+    // 内置 QQ 中转服务的运行句柄（自动配置开启且配置齐全时在跑）
+    relay: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -164,6 +167,86 @@ fn set_proxy(state: tauri::State<Arc<AppState>>, proxy: Option<String>) -> Confi
 fn set_notify(state: tauri::State<Arc<AppState>>, notify: bool) -> Config {
     state.with_config(|cfg| cfg.notify = notify);
     state.config.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_qq_notify(state: tauri::State<Arc<AppState>>, notify: bool) -> Config {
+    state.with_config(|cfg| cfg.qq_notify = notify);
+    state.config.lock().unwrap().clone()
+}
+
+// 自动配置 = 是否由本应用启动内置 QQ 中转服务（关着表示外部已有服务在跑）
+#[tauri::command]
+fn set_qq_autoconfig(state: tauri::State<Arc<AppState>>, enable: bool) -> Config {
+    state.with_config(|cfg| cfg.qq_autoconfig = enable);
+    restart_relay(&state);
+    state.config.lock().unwrap().clone()
+}
+
+// 端口 + 三凭证一并保存，全部无默认值；改完即按需重启内置中转
+#[tauri::command]
+fn set_qq_settings(
+    state: tauri::State<Arc<AppState>>,
+    port: Option<u16>,
+    app_id: Option<String>,
+    app_secret: Option<String>,
+    openid: Option<String>,
+) -> Config {
+    let trim = |s: Option<String>| s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    state.with_config(|cfg| {
+        cfg.qq_relay_port = port;
+        cfg.qq_app_id = trim(app_id);
+        cfg.qq_app_secret = trim(app_secret);
+        cfg.qq_openid = trim(openid);
+    });
+    restart_relay(&state);
+    state.config.lock().unwrap().clone()
+}
+
+fn relay_cfg_of(cfg: &Config) -> Option<Arc<qqrelay::RelayCfg>> {
+    qqrelay::RelayCfg::from_parts(
+        cfg.qq_relay_port,
+        cfg.qq_app_id.as_deref(),
+        cfg.qq_app_secret.as_deref(),
+        cfg.qq_openid.as_deref(),
+    )
+    .map(Arc::new)
+}
+
+// 按当前配置起停内置中转：自动配置开且配置齐全才跑，否则停掉旧的
+fn restart_relay(state: &AppState) {
+    if let Some(h) = state.relay.lock().unwrap().take() {
+        h.abort();
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    if !cfg.qq_autoconfig {
+        println!("[qq] 自动配置未开启，内置中转不启动");
+        return;
+    }
+    let Some(rc) = relay_cfg_of(&cfg) else {
+        println!("[qq] 自动配置已开但端口/凭证不全，内置中转不启动");
+        return;
+    };
+    let handle = tauri::async_runtime::spawn(qqrelay::run_server(rc));
+    *state.relay.lock().unwrap() = Some(handle);
+}
+
+// 有新事件时直调内置推送（不走 HTTP 回环；配置不齐则静默跳过）
+fn spawn_qq_push(cfg: &Config, events: &[github::Event]) {
+    if !cfg.qq_notify || events.is_empty() {
+        return;
+    }
+    let Some(rc) = relay_cfg_of(cfg) else {
+        println!("[qq] QQ 凭证/端口未配全，跳过 QQ 推送");
+        return;
+    };
+    let text = format!("[GitHubReminder]\n{}", toast_summary(events));
+    tauri::async_runtime::spawn(async move {
+        match qqrelay::send_to_qq(&rc, &text).await {
+            Ok(n) => println!("[qq] 已推送 {n} 段"),
+            Err(e) => println!("[qq] 推送失败（静默）: {e}"),
+        }
+    });
 }
 
 #[tauri::command]
@@ -336,6 +419,9 @@ async fn do_poll_inner(app: &tauri::AppHandle, state: &AppState) -> u64 {
                 }
             }
         }
+        if !toasting.is_empty() {
+            spawn_qq_push(&state.config.lock().unwrap().clone(), &toasting);
+        }
         if !toasting.is_empty()
             && state.config.lock().unwrap().notify
         {
@@ -432,6 +518,8 @@ pub fn run() {
             // 首次使用（config.json 不存在）时自带一条 microsoft/vscode 监听，开箱即用
             let first_run = !path.exists();
             let mut cfg = store::load(&path);
+            // token 唯一来源是凭据管理器；不迁移 config.json 里的旧明文（主人明确不要）
+            cfg.token = store::load_token();
             if first_run {
                 cfg.watches.push(Watch {
                     id: new_watch_id(),
@@ -465,7 +553,10 @@ pub fn run() {
                 last_poll: Mutex::new(None),
                 polling: AtomicBool::new(false),
                 notified: Mutex::new(HashSet::new()),
+                relay: Mutex::new(None),
             });
+            // 自动配置开着且配置齐全的话，启动内置 QQ 中转服务
+            restart_relay(&state);
             spawn_poller(app.handle().clone(), state.clone());
             spawn_visibility_guard(app.handle().clone());
             setup_tray(app)?;
@@ -490,6 +581,9 @@ pub fn run() {
             set_token,
             set_proxy,
             set_notify,
+            set_qq_notify,
+            set_qq_settings,
+            set_qq_autoconfig,
             set_autostart,
             get_autostart,
             add_watch,

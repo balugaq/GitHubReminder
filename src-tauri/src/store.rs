@@ -70,12 +70,26 @@ fn default_true() -> bool {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
-    // 只在内存里流转，实际存储走 Windows 凭据管理器（save_token/load_token）
-    #[serde(skip)]
+    // 凭据管理器是唯一持久化位置；save 落盘前会剔除，仅 API 响应与内存中可见
     pub token: Option<String>,
     pub proxy: Option<String>, // 例如 http://127.0.0.1:7890；空则走系统代理
     #[serde(default = "default_true")]
     pub notify: bool, // 新事件时弹系统 Toast
+    // QQ 互联通知：内置中转服务（qqrelay.rs）推 QQ 私信，失败静默。
+    // 全部无默认值，缺任一项则中转不启动、推送不发。
+    #[serde(default)]
+    pub qq_notify: bool,
+    // 自动配置：开启 = 由本应用启动内置 QQ 中转服务；关闭 = 外部已有服务，只发推送
+    #[serde(default)]
+    pub qq_autoconfig: bool,
+    #[serde(default)]
+    pub qq_relay_port: Option<u16>,
+    #[serde(default)]
+    pub qq_app_id: Option<String>,
+    #[serde(default)]
+    pub qq_app_secret: Option<String>,
+    #[serde(default)]
+    pub qq_openid: Option<String>,
     pub watches: Vec<Watch>,
     // 游标：首次轮询只记游标不报事件
     pub cursor_issues: HashMap<String, String>,   // watch_id -> 最后一条 issue/PR created_at
@@ -102,7 +116,10 @@ pub fn save(path: &PathBuf, cfg: &Config) {
     if let Some(dir) = path.parent() {
         let _ = fs::create_dir_all(dir);
     }
-    let json = serde_json::to_string_pretty(cfg).unwrap_or_default();
+    // token 不落盘（存 Windows 凭据管理器），剔除后再序列化
+    let mut disk = cfg.clone();
+    disk.token = None;
+    let json = serde_json::to_string_pretty(&disk).unwrap_or_default();
     let _ = fs::write(path, json);
 }
 

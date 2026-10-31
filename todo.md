@@ -25,13 +25,20 @@
   - 注意：首次运行预置的 microsoft/vscode 保持 issues+prs 不变（未开关闭/release 监听）。clippy -D warnings 零警告；旧配置里已有监听的 closed_issues/closed_prs 为 false，需手动编辑才开启（暂无编辑勾选入口，如需要可加）。
   - 待主人目视确认：添加表单勾选框布局、事件卡「关Issue/关PR」标签颜色。
   - 需求：① 仓库级监听增加「关 Issue」「关 PR」两类事件；② 新增监听的默认勾选：关 Issue、关 PR、Release 均默认勾选。
+- [x] **QQ 互联通知接入（js → Rust 内置改写）**（完成 2026-10-31 @master工作区直改，未提交待验收）
+  - qq_relay.js 已改写为内置模块 src-tauri/src/qqrelay.rs：最小 HTTP/1.1 服务（POST /send JSON、GET /send?text=、CORS）+ token 缓存（过期前 1 分钟刷新）+ @ 转义 + 1900 字分段；不再依赖 node / 外部脚本。
+  - 设置项全部无默认值：中转端口、AppID、AppSecret、OpenID——四项 + 自动配置开，内置服务才启动；改设置即时起停（JoinHandle abort 重启）。
+  - 自动配置开关保留（主人要求：外部可能已有服务在跑）：开 = 本应用起内置服务；关 = 只发推送不起服务。
+  - 事件推送不走 HTTP 回环，直调 qqrelay::send_to_qq；失败静默。旧「通知链接」设置项随 node 方案删除。
+  - 注意：AppSecret 明文存 config.json（与原 js 硬编码同级风险，如需可后续进凭据管理器）。clippy -D warnings 零警告。
+  - 待主人实测：设置四项 + 开自动配置 → 端口监听、curl POST /send 推到 QQ；新事件推 QQ。
 - [ ] Explorer 重启后嵌入窗口的父级失效处理（检测父窗口销毁 → 自动重嵌）。
 - [x] **嵌入模式下键盘输入验证**（完成 2026-10-31，主人实测 PAT 输入框在 WorkerW 子窗口中可正常打字）。
-- [x] **PAT 明文存储 → 迁移到 Windows 凭据管理器加密**（完成 2026-10-31 @master工作区直改，未提交待验收）
-  - 实现：Config.token 改 `#[serde(skip)]`（内存持有，config.json 不再落明文）；store.rs 新增 save_token/load_token 走 keyring 3（windows-native 凭据管理器，服务名 GitHubReminder/账户 pat）。
+- [x] **PAT 明文存储 → 迁移到 Windows 凭据管理器加密**（完成 2026-10-31 @master工作区直改，未提交待验收）  - 实现：Config.token 改 `#[serde(skip)]`（内存持有，config.json 不再落明文）；store.rs 新增 save_token/load_token 走 keyring 3（windows-native 凭据管理器，服务名 GitHubReminder/账户 pat）。
   - 迁移：启动时检测 config.json 里的旧明文 token → 写入凭据管理器并打印日志；写失败则本次会话仅内存保留（不回写磁盘）。凭据管理器读不到时回退会话内存值。
+  - 修正（2026-10-31 二次）：初版 `#[serde(skip)]` 会把 token 从 get_config/set_token 的 API 响应里一并删掉，前端永远显示"未设置"（表现为无法添加 token）。改为 token 正常序列化、仅 store::save 落盘前剔除；启动时 cfg.token = load_token()（凭据管理器为唯一来源），不做旧明文迁移（主人明确不要）。
   - set_token 改为 Result，凭据写入失败时报错给前端（manage.js alert 提示，原值不动）。
-  - clippy -D warnings 零警告。待主人实测：重启后通知/轮询正常（token 从凭据管理器恢复）。
+  - clippy -D warnings 零警告。待主人实测：添加 token 后状态变"已设置"，重启后轮询/通知正常。
 
 ## 里程碑
 - [x] M1 骨架：透明窗口 / 引导页 / 设置页 / 0.5s 上浮动画
