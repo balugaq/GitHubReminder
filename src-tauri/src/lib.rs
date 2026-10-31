@@ -682,11 +682,61 @@ fn mark_read(state: tauri::State<Arc<AppState>>, repo: String, number: Option<u6
     }
 }
 
-#[tauri::command]
-fn get_events(state: tauri::State<Arc<AppState>>) -> Vec<Entity> {
+// 卡片状态机：未读 / 已读 / 处理中 / 已完成（默认未读）
+const ENTITY_STATUSES: [&str; 4] = ["unread", "read", "in_progress", "done"];
+
+// 实体列表统一按最近更新时间降序，主界面直接消费
+fn sorted_entities(state: &AppState) -> Vec<Entity> {
     let mut v = state.config.lock().unwrap().entities.clone();
     v.sort_by(|a, b| b.updated_at.cmp(&a.updated_at)); // 最近变更在上
     v
+}
+
+#[tauri::command]
+fn get_events(state: tauri::State<Arc<AppState>>) -> Vec<Entity> {
+    sorted_entities(&state)
+}
+
+// 右键菜单改状态：按 repo+number 定位聚合实体（同一 issue/PR 只有一张卡）
+#[tauri::command]
+fn set_status(
+    state: tauri::State<Arc<AppState>>,
+    repo: String,
+    number: Option<u64>,
+    status: String,
+) -> Result<Vec<Entity>, String> {
+    if !ENTITY_STATUSES.contains(&status.as_str()) {
+        return Err(format!("未知状态: {status}"));
+    }
+    state.with_config(|cfg| {
+        for e in cfg.entities.iter_mut() {
+            if e.repo.eq_ignore_ascii_case(&repo) && e.number == number {
+                e.status = status.clone();
+            }
+        }
+    });
+    // 人工改过状态即允许该条目再次弹通知，与 mark_read 的去重口径一致
+    if let Some(n) = number {
+        state.notified.lock().unwrap().remove(&format!("{repo}#{n}"));
+    }
+    Ok(sorted_entities(&state))
+}
+
+// 删除卡片：只删通知记录，不动监听配置；被删条目不会再出现（除非有新动态）
+#[tauri::command]
+fn delete_event(
+    state: tauri::State<Arc<AppState>>,
+    repo: String,
+    number: Option<u64>,
+) -> Vec<Entity> {
+    state.with_config(|cfg| {
+        cfg.entities
+            .retain(|e| !(e.repo.eq_ignore_ascii_case(&repo) && e.number == number));
+    });
+    if let Some(n) = number {
+        state.notified.lock().unwrap().remove(&format!("{repo}#{n}"));
+    }
+    sorted_entities(&state)
 }
 
 #[tauri::command]
@@ -791,6 +841,8 @@ pub fn run() {
             poll_now,
             mark_read,
             get_events,
+            set_status,
+            delete_event,
             get_stats
         ])
         .run(tauri::generate_context!())

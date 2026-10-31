@@ -29,6 +29,13 @@
 
         <section id="view-list" class="view hidden">
           <p id="poll-error" class="error-text hidden"></p>
+          <!-- 分类：未读用红点角标，其余计数与文字同高灰色显示 -->
+          <nav id="status-tabs">
+            <button class="status-tab active" data-status="unread">未读<span class="tab-dot">0</span></button>
+            <button class="status-tab" data-status="read">已读<span class="tab-count">0</span></button>
+            <button class="status-tab" data-status="in_progress">处理中<span class="tab-count">0</span></button>
+            <button class="status-tab" data-status="done">已解决<span class="tab-count">0</span></button>
+          </nav>
           <div id="event-feed">
             <p id="feed-empty" class="hint">暂无新事件。轮询每 60 秒一次，有新动态会自动浮现。</p>
           </div>
@@ -44,6 +51,9 @@
           <button id="btn-stats-back" class="btn-primary">← 返回</button>
         </section>
       </main>
+
+      <!-- 卡片右键菜单：位置由 JS 按光标定位 -->
+      <div id="ctx-menu" class="hidden" role="menu"></div>
     </div>
     <script src="main.js"></script>
   </body>

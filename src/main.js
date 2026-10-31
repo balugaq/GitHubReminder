@@ -85,16 +85,23 @@ const KIND_LABEL = { issue: "Issue", pr: "PR", release: "Release", comment: "评
 // 实体最近一次变化的中文摘要 + 状态中文（Todo6：以 issue/pr/release 为单位的聚合卡片）
 const LAST_EVENT_LABEL = { open: "新建/开启", comment: "新评论", state: "状态变更", closed: "已关闭", release: "新版本" };
 const STATE_LABEL = { open: "进行中", closed: "已关闭", published: "已发布" };
-const MAX_HANGING = 3; // 悬挂位：最多 3 条未读置顶
+const PAGE_SIZE = 50; // 每个分类默认最多 50 条，展开再加 50
+
+let activeStatus = "unread";
+let feedLimit = PAGE_SIZE;
 
 // 全量事件（含历史持久化），新事件追加，状态以后端为准
 let allEvents = [];
 
+function entityKey(ev) {
+  return `${(ev.repo || "").toLowerCase()}:${ev.number ?? ""}`;
+}
+
 function buildCard(ev) {
-  const unread = ev.status !== "read";
   const card = document.createElement("a");
-  card.className = "event-card fade-up" + (unread ? " unread" : " read");
+  card.className = `event-card fade-up status-${ev.status || "unread"}`;
   card.href = ev.url;
+  card.dataset.key = entityKey(ev);
   card.innerHTML =
     `<span class="event-kind kind-${ev.kind}">${KIND_LABEL[ev.kind] || ev.kind}</span>` +
     `<span class="event-repo"></span>` +
@@ -108,43 +115,173 @@ function buildCard(ev) {
     (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
   card.addEventListener("click", (e) => {
     e.preventDefault();
-    // 已读粒度与 toast 去重一致：同一 issue/PR 一次读掉
-    for (const other of allEvents) {
-      if (other.repo === ev.repo && other.number === ev.number) other.status = "read";
-    }
-    invoke("mark_read", { repo: ev.repo, number: ev.number ?? null }).catch(() => {});
-    renderFeed();
+    // 未读点开即已读（同 GitHub 通知收件箱）；处理中/已完成不自动改
+    if ((ev.status || "unread") === "unread") applyStatus(ev, "read");
     window.__TAURI__.opener.openUrl(ev.url);
+  });
+  card.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu(ev, e.clientX, e.clientY);
   });
   return card;
 }
 
+// ---- 状态分类 tab ----
+function renderTabs() {
+  const counts = { unread: 0, read: 0, in_progress: 0, done: 0 };
+  for (const ev of allEvents) {
+    if (counts[ev.status] != null) counts[ev.status] += 1;
+  }
+  for (const btn of document.querySelectorAll(".status-tab")) {
+    const key = btn.dataset.status;
+    btn.classList.toggle("active", key === activeStatus);
+    const badge = btn.querySelector(".tab-dot, .tab-count");
+    if (!badge) continue;
+    badge.textContent = String(counts[key] || 0);
+    // 未读 0 条不亮红点；其余分类的计数始终显示
+    if (badge.classList.contains("tab-dot")) {
+      badge.classList.toggle("hidden", (counts[key] || 0) === 0);
+    }
+  }
+}
+
 function renderFeed() {
+  renderTabs();
   const feed = document.getElementById("event-feed");
+  const scrollTop = feed.scrollTop;
   feed.innerHTML = "";
-  const empty = document.createElement("p");
-  empty.id = "feed-empty";
-  empty.className = "hint";
-  empty.textContent = `暂无新事件。轮询每 ${config.pollInterval || 60} 秒一次，有新动态会自动浮现。`;
+  const showHint = (text) => {
+    const p = document.createElement("p");
+    p.id = "feed-empty";
+    p.className = "hint";
+    p.textContent = text;
+    feed.appendChild(p);
+  };
   if (allEvents.length === 0) {
-    feed.appendChild(empty);
+    showHint(`暂无新事件。轮询每 ${config.pollInterval || 60} 秒一次，有新动态会自动浮现。`);
     return;
   }
-  // 按最近更新时间降序（后端已排，这里兜底）
-  const sorted = [...allEvents].sort((a, b) =>
-    (b.updated_at || "").localeCompare(a.updated_at || "")
-  );
-  // 悬挂区：最近 3 条未读置顶高亮；其余进历史区（新在前）
-  const hanging = sorted.filter((ev) => ev.status !== "read").slice(0, MAX_HANGING);
-  const hangingKeys = new Set(hanging.map((ev) => `${ev.repo}:${ev.number}`));
-  const history = sorted
-    .filter((ev) => !hangingKeys.has(`${ev.repo}:${ev.number}`))
-    .slice(0, 50);
-  const zone = document.createElement("div");
-  zone.id = "hang-zone";
-  for (const ev of hanging) zone.appendChild(buildCard(ev));
-  feed.appendChild(zone);
-  for (const ev of history) feed.appendChild(buildCard(ev));
+  // 后端已按 updated_at 降序，这里只按分类过滤
+  const list = allEvents.filter((ev) => (ev.status || "unread") === activeStatus);
+  if (list.length === 0) {
+    showHint("该分类下还没有通知");
+    return;
+  }
+  const shown = list.slice(0, feedLimit);
+  for (const ev of shown) feed.appendChild(buildCard(ev));
+  const rest = list.length - shown.length;
+  if (rest > 0) {
+    // 按钮排在列表末尾，滚到底即可见，点一次多展开 50 条
+    const btn = document.createElement("button");
+    btn.id = "btn-expand";
+    btn.className = "btn-expand";
+    btn.textContent = `展开更多（还有 ${rest} 条）`;
+    btn.addEventListener("click", () => {
+      feedLimit += PAGE_SIZE;
+      renderFeed();
+    });
+    feed.appendChild(btn);
+  }
+  feed.scrollTop = scrollTop;
+}
+
+// ---- 状态变更 / 删除 / 复制 ----
+async function applyStatus(ev, status) {
+  try {
+    allEvents = await invoke("set_status", {
+      repo: ev.repo,
+      number: ev.number ?? null,
+      status,
+    });
+    renderFeed();
+  } catch (err) {
+    console.warn("更新状态失败:", err);
+  }
+}
+
+async function deleteEntity(ev) {
+  try {
+    allEvents = await invoke("delete_event", {
+      repo: ev.repo,
+      number: ev.number ?? null,
+    });
+    renderFeed();
+  } catch (err) {
+    console.warn("删除通知失败:", err);
+  }
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // 裁剪板 API 不可用时退回 execCommand
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    ta.remove();
+    return ok;
+  }
+}
+
+// ---- 右键菜单 ----
+function closeContextMenu() {
+  const menu = document.getElementById("ctx-menu");
+  menu.classList.add("hidden");
+  menu.innerHTML = "";
+}
+
+function addCtxItem(menu, label, onClick, opts = {}) {
+  const b = document.createElement("button");
+  b.className = "ctx-item" + (opts.checked ? " checked" : "") + (opts.danger ? " danger" : "");
+  b.textContent = label;
+  b.addEventListener("click", () => {
+    closeContextMenu();
+    onClick();
+  });
+  menu.appendChild(b);
+}
+
+function openContextMenu(ev, x, y) {
+  const menu = document.getElementById("ctx-menu");
+  menu.innerHTML = "";
+  const current = ev.status || "unread";
+  const statusItems = [
+    ["unread", "未读"],
+    ["read", "已读"],
+    ["in_progress", "处理中"],
+    ["done", "已完成"],
+  ];
+  for (const [status, label] of statusItems) {
+    addCtxItem(menu, label, () => applyStatus(ev, status), { checked: current === status });
+  }
+  const sep = document.createElement("div");
+  sep.className = "ctx-sep";
+  menu.appendChild(sep);
+  addCtxItem(menu, "复制链接", async () => {
+    const ok = await copyText(ev.url);
+    if (!ok) console.warn("复制失败:", ev.url);
+  });
+  addCtxItem(menu, "删除", () => deleteEntity(ev), { danger: true });
+
+  menu.classList.remove("hidden");
+  // 先量尺寸再定位，避免贴边溢出
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(x, window.innerWidth - rect.width - 6);
+  const top = Math.min(y, window.innerHeight - rect.height - 6);
+  menu.style.left = `${Math.max(4, left)}px`;
+  menu.style.top = `${Math.max(4, top)}px`;
 }
 
 async function loadEvents() {
@@ -262,6 +399,28 @@ function applyWindowMode() {
   // 启动竞态兜底：配置在两窗口同时初始化期间可能未就绪
   setTimeout(syncFromRust, 1500);
   window.addEventListener("focus", syncFromRust);
+
+  // 分类 tab 切换：重置分页并回到顶部
+  for (const btn of document.querySelectorAll(".status-tab")) {
+    btn.addEventListener("click", () => {
+      if (activeStatus === btn.dataset.status) return;
+      activeStatus = btn.dataset.status;
+      feedLimit = PAGE_SIZE;
+      renderFeed();
+      document.getElementById("event-feed").scrollTop = 0;
+    });
+  }
+
+  // 右键菜单：点空白 / 滚轮 / 失焦 / Esc 都收起
+  document.addEventListener("click", closeContextMenu);
+  document.addEventListener("contextmenu", (e) => {
+    if (!e.target.closest(".event-card")) closeContextMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeContextMenu();
+  });
+  window.addEventListener("blur", closeContextMenu);
+  document.getElementById("event-feed").addEventListener("scroll", closeContextMenu);
 
   listen("ghr-events", (e) => addEvents(e.payload));
 
