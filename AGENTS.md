@@ -29,9 +29,13 @@
 - 每个 todo 在独立 worktree 中完成：
   ```bash
   git worktree add ../GitHubReminder-wt-<todo名> -b worktree/<todo名>
+  # 创建后必须补两件事：
+  cp .cargo/config.toml ../GitHubReminder-wt-<todo名>/.cargo/config.toml   # 共享 cargo target 目录
+  cd ../GitHubReminder-wt-<todo名> && npm install                          # node_modules 各自独立（仅 16M，不搞共享）
   ```
 - worktree 命名：`GitHubReminder-wt-<短名>`，分支命名：`worktree/<短名>`。
 - 一个 worktree 只做一个 todo，不混装。
+- `.cargo/config.toml` 把 target-dir 指向 `D:/github_clone/.cargo-target-GitHubReminder`（绝对路径，相对路径在各 worktree 下会解析到不同目录）。若该文件尚未提交进 master，则每个新 worktree 都要手动复制一份；主人提交后新分支自动携带，可省这一步。
 
 ### 2.2 合并规则（重要边界）
 - worktree 内**允许正常 commit**（分支上的提交是工作过程记录）。
@@ -61,6 +65,8 @@ worktree 中的工作要合并进 master，必须满足：
 ## 4. 已知项目约束（速查）
 
 - Rust 工具链不在 Git Bash PATH：`export PATH="$(cygpath -u "$USERPROFILE")/.cargo/bin:$PATH"`。
+- **cargo 构建目录全局共享**（`D:/github_clone/.cargo-target-GitHubReminder`，由 `.cargo/config.toml` 指定）：编译会互斥排队，同时只能有一个 worktree 在编；这是为换取零重复编译有意接受的代价。多 worktree 并发跑 cargo 时后到的会等待，不是卡死。
 - 主人 `tauri dev` 运行中时 cargo 会撞编译锁（os error 5），编译前确认或轮询等待。
+- 删除大体积构建产物（target 等）时，Windows 安全删除钩子对大目录整树删除会失败（trash 失败即拒绝），需先清零文件内容再删，或交主人手动 `rmdir /s /q`。
 - 本机访问 GitHub API 依赖 Watt Toolkit MITM + native-tls + 强制 IPv4，勿动这三层。
 - 数据文件在 `%APPDATA%\com.githubreminder.app\config.json`，含 token，不外传、不打印内容。
