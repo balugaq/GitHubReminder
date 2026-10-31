@@ -870,6 +870,16 @@ pub fn run() {
             // 自动配置开着且配置齐全的话，启动内置 QQ 中转服务
             restart_relay(&state);
             spawn_poller(app.handle().clone(), state.clone());
+            // 打开 app 先自动轮询一次，不必等第一个轮询周期到点；
+            // 稍等 1s 让主窗口挂好事件监听，首轮结果才不会漏给前端
+            {
+                let handle = app.handle().clone();
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    do_poll(&handle, &st).await;
+                });
+            }
             spawn_visibility_guard(app.handle().clone());
             setup_tray(app)?;
             app.manage(state);
