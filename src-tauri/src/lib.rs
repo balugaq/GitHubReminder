@@ -2,11 +2,13 @@ mod github;
 mod store;
 mod winembed;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use store::{Config, Watch};
+use store::{Config, StoredEvent, Watch};
 use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_notification::NotificationExt;
@@ -14,6 +16,12 @@ use tauri_plugin_notification::NotificationExt;
 pub struct AppState {
     path: PathBuf,
     config: Mutex<Config>,
+    // 上次轮询完成的 Unix 秒，供前端 hint 显示
+    last_poll: Mutex<Option<u64>>,
+    // 轮循互斥：一轮超过 60s 时定时器会并发再起一轮，两轮共用旧游标会重复通知
+    polling: AtomicBool,
+    // 已弹过 toast 且用户还没读掉的 issue/PR（"repo#n"），点击已读后由 mark_read 清除
+    notified: Mutex<HashSet<String>>,
 }
 
 impl AppState {
@@ -172,11 +180,17 @@ fn get_autostart(app: tauri::AppHandle) -> bool {
 
 fn toast_summary(events: &[github::Event]) -> String {
     let first = &events[0];
+    // 评论不在 toast 里展示内容，统一叫"有新消息"，内容去事件流里看
+    let title = if first.kind == "comment" {
+        "有新消息".to_string()
+    } else {
+        first.title.clone()
+    };
     let head = format!(
         "{}{} {}",
         first.repo,
         first.number.map(|n| format!(" #{n}")).unwrap_or_default(),
-        first.title
+        title
     );
     if events.len() == 1 {
         head
@@ -232,35 +246,151 @@ fn toggle_main_window(app: &tauri::AppHandle) {
     }
 }
 
+const MAX_EVENTS: usize = 200;
+
+// 新事件落库（防重启丢失）+ 按仓库/单条两个维度累计各类型次数
+fn record_events(cfg: &mut Config, events: &[github::Event]) {
+    for ev in events {
+        cfg.events.push(StoredEvent {
+            kind: ev.kind.clone(),
+            repo: ev.repo.clone(),
+            number: ev.number,
+            title: ev.title.clone(),
+            url: ev.url.clone(),
+            created_at: ev.created_at.clone(),
+            read: false,
+        });
+        let bump = |m: &mut std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>, key: String| {
+            *m.entry(key).or_default().entry(ev.kind.clone()).or_insert(0) += 1;
+        };
+        bump(&mut cfg.stats, ev.repo.clone());
+        if let Some(n) = ev.number {
+            bump(&mut cfg.stats, format!("{}#{n}", ev.repo));
+        }
+    }
+    let len = cfg.events.len();
+    if len > MAX_EVENTS {
+        cfg.events.drain(..len - MAX_EVENTS);
+    }
+}
+
+// 轮询 + 落盘 + 事件广播，轮循协程和手动刷新共用；返回完成时刻的 Unix 秒
+async fn do_poll(app: &tauri::AppHandle, state: &AppState) -> u64 {
+    // 上一轮还没跑完就跳过本轮，避免两轮共用旧游标重复通知
+    if state
+        .polling
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        println!("[poll {}] 上一轮仍在进行，跳过本轮", github::now_str());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        return now;
+    }
+    let out = do_poll_inner(app, state).await;
+    state.polling.store(false, Ordering::Release);
+    out
+}
+
+async fn do_poll_inner(app: &tauri::AppHandle, state: &AppState) -> u64 {
+    let (events, err) = {
+        let mut cfg = state.config.lock().unwrap().clone();
+        let (events, err) = github::poll_all(&mut cfg).await;
+        if !events.is_empty() {
+            record_events(&mut cfg, &events);
+        }
+        // 只有游标可能变化，无事件时也照常落盘（增量小，可接受）
+        *state.config.lock().unwrap() = cfg;
+        store::save(&state.path, &state.config.lock().unwrap());
+        (events, err)
+    };
+    if let Some(e) = err {
+        let _ = app.emit("ghr-poll-error", e);
+    }
+    if !events.is_empty() {
+        let _ = app.emit("ghr-events", &events);
+        // 同一 issue/PR 已弹过且用户未读则不再弹 toast；release 无编号不参与去重
+        let mut toasting: Vec<github::Event> = Vec::new();
+        {
+            let mut notified = state.notified.lock().unwrap();
+            for ev in &events {
+                match ev.number {
+                    Some(n) => {
+                        let key = format!("{}#{n}", ev.repo);
+                        if notified.insert(key) {
+                            toasting.push(ev.clone());
+                        }
+                    }
+                    None => toasting.push(ev.clone()),
+                }
+            }
+        }
+        if !toasting.is_empty()
+            && state.config.lock().unwrap().notify
+        {
+            let _ = app
+                .notification()
+                .builder()
+                .title("GitHub 通知")
+                .body(toast_summary(&toasting))
+                .show();
+        }
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    *state.last_poll.lock().unwrap() = Some(now);
+    let _ = app.emit("ghr-poll-done", now);
+    now
+}
+
 fn spawn_poller(app: tauri::AppHandle, state: Arc<AppState>) {
     tauri::async_runtime::spawn(async move {
         println!("[poll] 轮循协程已启动, 间隔 60 秒");
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-            let (events, err) = {
-                let mut cfg = state.config.lock().unwrap().clone();
-                let (events, err) = github::poll_all(&mut cfg).await;
-                // 只有游标可能变化，无事件时也照常落盘（增量小，可接受）
-                *state.config.lock().unwrap() = cfg;
-                store::save(&state.path, &state.config.lock().unwrap());
-                (events, err)
-            };
-            if let Some(e) = err {
-                let _ = app.emit("ghr-poll-error", e);
-            }
-            if !events.is_empty() {
-                let _ = app.emit("ghr-events", &events);
-                if state.config.lock().unwrap().notify {
-                    let _ = app
-                        .notification()
-                        .builder()
-                        .title("GitHub 通知")
-                        .body(toast_summary(&events))
-                        .show();
-                }
-            }
+            do_poll(&app, &state).await;
         }
     });
+}
+
+// 前端点 🔄 立即刷新；返回完成时刻供 hint 显示
+#[tauri::command]
+async fn poll_now(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<u64, String> {
+    Ok(do_poll(&app, &state).await)
+}
+
+// 用户点开事件卡即视为该 issue/PR 已读，之后它的新闻动才允许再弹 toast
+#[tauri::command]
+fn mark_read(state: tauri::State<Arc<AppState>>, repo: String, number: Option<u64>) {
+    if let Some(n) = number {
+        state.with_config(|cfg| {
+            for ev in cfg.events.iter_mut() {
+                if ev.repo.eq_ignore_ascii_case(&repo) && ev.number == Some(n) {
+                    ev.read = true;
+                }
+            }
+        });
+        state.notified.lock().unwrap().remove(&format!("{repo}#{n}"));
+    }
+}
+
+#[tauri::command]
+fn get_events(state: tauri::State<Arc<AppState>>) -> Vec<StoredEvent> {
+    state.config.lock().unwrap().events.clone()
+}
+
+#[tauri::command]
+fn get_stats(
+    state: tauri::State<Arc<AppState>>,
+) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
+    state.config.lock().unwrap().stats.clone()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -291,6 +421,11 @@ pub fn run() {
                     releases: false,
                     comments: true,
                     state_change: true,
+                    title: None,
+                    created: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
                 });
                 store::save(&path, &cfg);
                 println!("[init] 首次使用，已预置监听 microsoft/vscode (issues+prs)");
@@ -304,6 +439,9 @@ pub fn run() {
             let state = Arc::new(AppState {
                 path,
                 config: Mutex::new(cfg),
+                last_poll: Mutex::new(None),
+                polling: AtomicBool::new(false),
+                notified: Mutex::new(HashSet::new()),
             });
             spawn_poller(app.handle().clone(), state.clone());
             setup_tray(app)?;
@@ -330,7 +468,11 @@ pub fn run() {
             add_watch,
             update_watch,
             remove_watch,
-            open_manage
+            open_manage,
+            poll_now,
+            mark_read,
+            get_events,
+            get_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

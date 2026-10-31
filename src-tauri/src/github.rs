@@ -235,17 +235,15 @@ async fn poll_item(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> Res
             .json()
             .await
             .map_err(|e| format!("{e:?}"))?;
-        // 返回是降序（最新在前）
-        let latest_id = comments.first().map(|c| c.id);
+        // 实测该端点 direction=desc 不生效、固定按 created 升序返回，
+        // 不能拿 first 当最新：游标一律取全量最大 id，过滤也只认 id
         let cursor = cfg.cursor_comment.get(&w.id).copied();
-        let first_run = cursor.is_none();
-        // 升序遍历新于游标的评论，事件按时间正序浮现
-        for c in comments.iter().rev() {
-            if let Some(last) = cursor
-                && c.id <= last
-            {
-                continue;
-            }
+        let mut new_comments: Vec<&Comment> = comments
+            .iter()
+            .filter(|c| cursor.is_some_and(|last| c.id > last))
+            .collect();
+        new_comments.sort_by_key(|c| c.id);
+        for c in new_comments {
             events.push(Event {
                 kind: "comment".into(),
                 repo: w.repo.clone(),
@@ -255,11 +253,8 @@ async fn poll_item(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> Res
                 created_at: c.created_at.clone(),
             });
         }
-        if first_run {
-            events.clear(); // 首次只记游标
-        }
-        if let Some(id) = latest_id {
-            cfg.cursor_comment.insert(w.id.clone(), id);
+        if let Some(max_id) = comments.iter().map(|c| c.id).max() {
+            cfg.cursor_comment.insert(w.id.clone(), max_id);
         }
     }
 

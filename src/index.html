@@ -31,8 +31,20 @@
           <div id="event-feed">
             <p id="feed-empty" class="hint">暂无新事件。轮询每 60 秒一次，有新动态会自动浮现。</p>
           </div>
-          <div id="watch-list"></div>
-          <button id="btn-add-watch" class="btn-primary fade-up delay-2">⚙ 监听管理 / 添加</button>
+          <div id="status-hint" class="fade-up delay-2">
+            <span id="hint-text">正在监听 0 个仓库 + 0 个单独条目 · 上次刷新在 --:--:--</span>
+            <button id="btn-refresh" class="tb-btn" title="立即刷新">🔄</button>
+          </div>
+          <div class="actions fade-up delay-2">
+            <button id="btn-add-watch" class="btn-primary">⚙ 监听管理 / 添加</button>
+            <button id="btn-stats" class="btn-primary">📊 查看统计</button>
+          </div>
+        </section>
+
+        <section id="view-stats" class="view hidden">
+          <p class="stats-title">通知统计（跨重启累计）</p>
+          <div id="stats-list"></div>
+          <button id="btn-stats-back" class="btn-primary">← 返回</button>
         </section>
       </main>
     </div>

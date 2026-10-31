@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
 
@@ -44,6 +44,18 @@ impl Default for Watch {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StoredEvent {
+    pub kind: String, // "issue" | "pr" | "release" | "comment" | "state"
+    pub repo: String,
+    pub number: Option<u64>,
+    pub title: String,
+    pub url: String,
+    pub created_at: String,
+    pub read: bool,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -61,6 +73,12 @@ pub struct Config {
     pub cursor_release: HashMap<String, String>,  // watch_id -> 最后 release id
     pub cursor_comment: HashMap<String, i64>,     // watch_id -> 最后一条评论 id
     pub cursor_state: HashMap<String, String>,    // watch_id -> 最后见到的 state (open/closed)
+    // 通知持久化（上限 200 条，超出丢最旧），read 由前端点卡时经 mark_read 置位
+    #[serde(default)]
+    pub events: Vec<StoredEvent>,
+    // 统计：维度("repo" 或 "repo#n") -> 类型(kind) -> 次数，跨重启累计
+    #[serde(default)]
+    pub stats: BTreeMap<String, BTreeMap<String, u64>>,
 }
 
 pub fn load(path: &PathBuf) -> Config {
