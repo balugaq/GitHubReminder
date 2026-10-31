@@ -81,7 +81,7 @@ function updateStatusHint() {
 }
 
 // ---- 事件流 ----
-const KIND_LABEL = { issue: "Issue", pr: "PR", release: "Release", comment: "评论", state: "状态" };
+const KIND_LABEL = { issue: "Issue", pr: "PR", release: "Release", comment: "评论", state: "状态", closed_issue: "关Issue", closed_pr: "关PR" };
 const MAX_HANGING = 3; // 悬挂位：最多 3 条未读置顶
 
 // 全量事件（含历史持久化），新事件追加，read 状态以后端为准

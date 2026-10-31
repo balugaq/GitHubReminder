@@ -65,6 +65,8 @@ function watchBadges(w) {
     w.issues ? ["b-issue", "新 Issue"] : null,
     w.prs ? ["b-pr", "新 PR"] : null,
     w.releases ? ["b-release", "新 Release"] : null,
+    w.closed_issues ? ["b-state", "关 Issue"] : null,
+    w.closed_prs ? ["b-state", "关 PR"] : null,
   ].filter(Boolean);
 }
 
@@ -282,6 +284,8 @@ document.getElementById("btn-add-confirm").addEventListener("click", async () =>
       issues: document.getElementById("chk-issues").checked,
       prs: document.getElementById("chk-prs").checked,
       releases: document.getElementById("chk-releases").checked,
+      closedIssues: document.getElementById("chk-closed-issues").checked,
+      closedPrs: document.getElementById("chk-closed-prs").checked,
       comments: document.getElementById("chk-comments").checked,
       stateChange: document.getElementById("chk-state").checked,
     });

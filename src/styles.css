@@ -180,6 +180,8 @@ button { font-family: inherit; }
 .kind-release { background: rgba(255, 170, 60, 0.6); }
 .kind-comment { background: rgba(180, 120, 255, 0.6); }
 .kind-state { background: rgba(255, 120, 120, 0.6); }
+.kind-closed_issue { background: rgba(150, 150, 150, 0.6); }
+.kind-closed_pr { background: rgba(110, 110, 130, 0.6); }
 
 .event-card.read { opacity: 0.5; }
 
