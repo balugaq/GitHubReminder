@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>监听管理 - 示范</title>
+<style>
+  :root {
+    --bg-panel: rgba(30, 32, 40, 0.85);
+    --bg-card: rgba(255, 255, 255, 0.06);
+    --bg-card-hover: rgba(255, 255, 255, 0.12);
+    --text: #e8eaf0;
+    --text-dim: rgba(232, 234, 240, 0.55);
+    --accent: #4a90d9;
+    --danger: #e05555;
+    --badge-issue: rgba(80, 200, 120, 0.55);
+    --badge-pr: rgba(120, 150, 255, 0.55);
+    --badge-release: rgba(255, 170, 60, 0.6);
+    --badge-comment: rgba(180, 120, 255, 0.55);
+    --badge-state: rgba(255, 90, 90, 0.55);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+  body {
+    background: linear-gradient(135deg, #23252e 0%, #1a1c22 100%);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 24px;
+  }
+  /* 模拟"更大的第二窗口"的面板 */
+  .panel {
+    width: 720px;
+    height: 560px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(18px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .titlebar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.04);
+  }
+  .titlebar h1 { font-size: 15px; font-weight: 600; }
+  .win-btns { display: flex; gap: 8px; }
+  .win-btns button {
+    width: 12px; height: 12px; border-radius: 50%; border: none; cursor: pointer;
+  }
+  .btn-min { background: #f5c451; } .btn-close { background: #e05555; }
+
+  .toolbar {
+    display: flex; gap: 10px; padding: 12px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    align-items: center;
+  }
+  .search {
+    flex: 1; position: relative;
+  }
+  .search input {
+    width: 100%; padding: 8px 12px 8px 32px;
+    background: var(--bg-card);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px; color: var(--text); font-size: 13px;
+    outline: none;
+  }
+  .search input:focus { border-color: var(--accent); }
+  .search::before {
+    content: "🔍"; position: absolute; left: 10px; top: 7px;
+    font-size: 13px; opacity: 0.6;
+  }
+  .sort-btn {
+    padding: 8px 14px; font-size: 13px;
+    background: var(--bg-card); color: var(--text);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px; cursor: pointer;
+  }
+  .sort-btn:hover { background: var(--bg-card-hover); }
+
+  /* 主体：左分组树 + 右列表 */
+  .body-row { flex: 1; display: flex; min-height: 0; }
+  .group-nav {
+    width: 170px; border-right: 1px solid rgba(255,255,255,0.08);
+    padding: 10px 8px; overflow-y: auto;
+  }
+  .group-nav .nav-label {
+    font-size: 11px; color: var(--text-dim); padding: 4px 8px; letter-spacing: 1px;
+  }
+  .group-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 10px; margin: 2px 0; border-radius: 6px;
+    font-size: 13px; cursor: pointer; color: var(--text-dim);
+  }
+  .group-item:hover { background: var(--bg-card); }
+  .group-item.active { background: var(--bg-card-hover); color: var(--text); }
+  .group-item .cnt {
+    font-size: 11px; background: var(--bg-card); border-radius: 8px;
+    padding: 1px 7px; color: var(--text-dim);
+  }
+
+  .list-area { flex: 1; overflow-y: auto; padding: 12px; }
+  .list-area::-webkit-scrollbar, .group-nav::-webkit-scrollbar { width: 6px; }
+  .list-area::-webkit-scrollbar-thumb, .group-nav::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15); border-radius: 3px;
+  }
+
+  .watch-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 14px; margin-bottom: 8px;
+    background: var(--bg-card); border-radius: 8px;
+    border: 1px solid transparent;
+    animation: fadeUp 0.5s ease both;
+  }
+  .watch-row:hover { background: var(--bg-card-hover); border-color: rgba(255,255,255,0.1); }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .watch-main { flex: 1; min-width: 0; }
+  .watch-name { font-size: 13.5px; font-weight: 500; }
+  .watch-sub { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
+  .badges { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
+  .badge {
+    font-size: 10.5px; padding: 1.5px 8px; border-radius: 8px;
+    color: rgba(255,255,255,0.92);
+  }
+  .b-issue { background: var(--badge-issue); }
+  .b-pr { background: var(--badge-pr); }
+  .b-release { background: var(--badge-release); }
+  .b-comment { background: var(--badge-comment); }
+  .b-state { background: var(--badge-state); }
+  .row-actions { display: flex; gap: 6px; }
+  .row-actions button {
+    background: transparent; border: none; color: var(--text-dim);
+    cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: 5px;
+  }
+  .row-actions button:hover { background: rgba(255,255,255,0.12); color: var(--text); }
+
+  /* 空态引导 */
+  .empty-state {
+    height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    text-align: center;
+  }
+  .empty-icon { font-size: 44px; opacity: 0.5; }
+  .empty-title { font-size: 15px; font-weight: 600; }
+  .empty-desc { font-size: 12.5px; color: var(--text-dim); line-height: 1.7; max-width: 340px; }
+  .btn-guide {
+    padding: 9px 26px; font-size: 13.5px;
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(74,144,217,0.4);
+    animation: fadeUp 0.5s ease 0.1s both;
+  }
+  .btn-guide:hover { filter: brightness(1.12); }
+
+  .footer-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.08);
+    font-size: 12px; color: var(--text-dim);
+  }
+  .btn-add {
+    padding: 7px 18px; font-size: 12.5px;
+    background: var(--accent); color: #fff; border: none; border-radius: 7px; cursor: pointer;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="panel">
+  <div class="titlebar">
+    <h1>⭐ 监听管理</h1>
+    <div class="win-btns"><button class="btn-min"></button><button class="btn-close" onclick="toggleEmpty()"></button></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="search">
+      <input id="search" type="text" placeholder="搜索仓库 / Issue / PR 编号…" oninput="render()">
+    </div>
+    <button class="sort-btn" id="sort-btn" onclick="toggleSort()">↓ 最近添加</button>
+  </div>
+
+  <div class="body-row">
+    <div class="group-nav" id="group-nav"></div>
+    <div class="list-area" id="list-area"></div>
+  </div>
+
+  <div class="footer-bar">
+    <span id="stat">共 6 项监听 · 3 个项目</span>
+    <button class="btn-add" onclick="alert('打开添加监听表单（演示）')">＋ 添加监听</button>
+  </div>
+</div>
+
+<script>
+// 假数据：kind 决定徽章
+const DATA = [
+  { id: 1, repo: "microsoft/vscode", target: null, kinds: ["issue","pr"], time: "2026-10-31 12:00", added: 3 },
+  { id: 2, repo: "microsoft/vscode", target: "#1234 修复内存泄漏", kinds: ["comment","state"], time: "2026-10-30 20:15", added: 2 },
+  { id: 3, repo: "rust-lang/rust", target: null, kinds: ["release"], time: "2026-10-29 09:30", added: 1 },
+  { id: 4, repo: "tauri-apps/tauri", target: null, kinds: ["issue","pr","release"], time: "2026-10-28 18:40", added: 0 },
+  { id: 5, repo: "tauri-apps/tauri", target: "#8899 支持多窗口", kinds: ["comment"], time: "2026-10-27 11:20", added: 4 },
+  { id: 6, repo: "balugaq/test_repo", target: null, kinds: ["issue"], time: "2026-10-25 08:00", added: 5 },
+];
+const KIND_LABEL = { issue: "新 Issue", pr: "新 PR", release: "新 Release", comment: "新评论", state: "状态变更" };
+const KIND_CLASS = { issue: "b-issue", pr: "b-pr", release: "b-release", comment: "b-comment", state: "b-state" };
+
+let activeGroup = "all";   // all | repo:xxx | single
+let sortDesc = true;
+
+const groups = () => {
+  const map = new Map();
+  for (const d of DATA) {
+    const k = d.target ? "single" : `repo:${d.repo}`;
+    map.set(k, (map.get(k) || 0) + 1);
+  }
+  return map;
+};
+
+function toggleSort() { sortDesc = !sortDesc; render(); }
+
+function render() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  let items = DATA.filter(d => {
+    const inGroup = activeGroup === "all"
+      || (activeGroup === "single" && d.target)
+      || (activeGroup === `repo:${d.repo}` && !d.target);
+    const hay = `${d.repo} ${d.target || ""}`.toLowerCase();
+    return inGroup && (!q || hay.includes(q));
+  });
+  items.sort((a, b) => sortDesc ? b.added - a.added : a.added - b.added);
+  document.getElementById("sort-btn").textContent = sortDesc ? "↓ 最近添加" : "↑ 最早添加";
+
+  // 分组导航
+  const nav = document.getElementById("group-nav");
+  nav.innerHTML = `<div class="nav-label">项目分组</div>`;
+  const mk = (key, label, cnt) => {
+    const el = document.createElement("div");
+    el.className = "group-item" + (activeGroup === key ? " active" : "");
+    el.innerHTML = `<span></span><span class="cnt">${cnt}</span>`;
+    el.querySelector("span").textContent = label;
+    el.onclick = () => { activeGroup = key; render(); };
+    nav.appendChild(el);
+  };
+  mk("all", "全部", DATA.length);
+  for (const [k, c] of groups()) {
+    mk(k, k === "single" ? "🔖 单条监听" : k.slice(5), c);
+  }
+
+  // 列表 / 空态
+  const area = document.getElementById("list-area");
+  area.innerHTML = "";
+  document.getElementById("stat").textContent =
+    `共 ${items.length} 项监听 · ${groups().size} 个项目`;
+  if (items.length === 0) {
+    area.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <div class="empty-title">这里空空如也</div>
+        <div class="empty-desc">添加仓库可以监听新 Issue / PR / Release；<br>贴一条 Issue 或 PR 链接，还能监听新评论和状态变更。</div>
+        <button class="btn-guide" onclick="alert('打开引导流程（演示）')">开始添加监听</button>
+      </div>`;
+    return;
+  }
+  for (const d of items) {
+    const row = document.createElement("div");
+    row.className = "watch-row";
+    row.innerHTML = `
+      <div class="watch-main">
+        <div class="watch-name"></div>
+        <div class="badges"></div>
+      </div>
+      <div class="row-actions">
+        <button title="编辑">✏️</button>
+        <button title="移除">🗑️</button>
+      </div>`;
+    row.querySelector(".watch-name").textContent =
+      d.target ? `${d.repo} ${d.target}` : d.repo;
+    row.querySelector(".watch-name").style.fontSize = d.target ? "13px" : "13.5px";
+    const badges = row.querySelector(".badges");
+    for (const k of d.kinds) {
+      const b = document.createElement("span");
+      b.className = `badge ${KIND_CLASS[k]}`;
+      b.textContent = KIND_LABEL[k];
+      badges.appendChild(b);
+    }
+    row.querySelector(".row-actions button").onclick = () => alert(`打开编辑表单：${d.repo}（演示）`);
+    row.querySelectorAll(".row-actions button")[1].onclick = () => alert(`移除：${d.repo}（演示）`);
+    area.appendChild(row);
+  }
+}
+render();
+</script>
+</body>
+</html>
