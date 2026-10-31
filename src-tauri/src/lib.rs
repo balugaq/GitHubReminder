@@ -3,6 +3,7 @@ mod store;
 mod winembed;
 
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -222,14 +223,29 @@ fn toggle_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         match w.is_visible() {
             Ok(true) => {
+                // 这是主人主动藏，Win+D 守护协程见到 USER_HIDDEN 要放手
+                winembed::USER_HIDDEN.store(true, Ordering::Relaxed);
                 let _ = w.hide();
             }
             _ => {
+                winembed::USER_HIDDEN.store(false, Ordering::Relaxed);
                 let _ = w.show();
                 let _ = w.set_focus();
             }
         }
     }
+}
+
+// Win+D 会藏掉贴桌面的嵌入窗口且托盘唤不回（不在任务栏），定时检测自动唤回
+fn spawn_visibility_guard(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if let Some(w) = app.get_webview_window("main") {
+                winembed::restore_if_hidden_by_win_d(&w);
+            }
+        }
+    });
 }
 
 fn spawn_poller(app: tauri::AppHandle, state: Arc<AppState>) {
@@ -291,6 +307,11 @@ pub fn run() {
                     releases: false,
                     comments: true,
                     state_change: true,
+                    title: None,
+                    created: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
                 });
                 store::save(&path, &cfg);
                 println!("[init] 首次使用，已预置监听 microsoft/vscode (issues+prs)");
@@ -306,6 +327,7 @@ pub fn run() {
                 config: Mutex::new(cfg),
             });
             spawn_poller(app.handle().clone(), state.clone());
+            spawn_visibility_guard(app.handle().clone());
             setup_tray(app)?;
             app.manage(state);
             Ok(())
@@ -316,6 +338,9 @@ pub fn run() {
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
             {
                 api.prevent_close();
+                if window.label() == "main" {
+                    winembed::USER_HIDDEN.store(true, Ordering::Relaxed);
+                }
                 let _ = window.hide();
             }
         })
