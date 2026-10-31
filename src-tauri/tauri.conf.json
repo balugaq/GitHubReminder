@@ -21,6 +21,21 @@
         "alwaysOnTop": false,
         "resizable": true,
         "center": true
+      },
+      {
+        "label": "manage",
+        "url": "manage.html",
+        "title": "监听管理 - GitHub 通知",
+        "width": 720,
+        "height": 560,
+        "minWidth": 600,
+        "minHeight": 440,
+        "decorations": false,
+        "shadow": true,
+        "resizable": true,
+        "center": true,
+        "visible": false,
+        "backgroundColor": "#1c1e26"
       }
     ],
     "security": {

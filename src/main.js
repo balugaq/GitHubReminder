@@ -1,5 +1,4 @@
-// M2：监听管理 + 事件流（Rust 轮询 GitHub API，emit ghr-events）
-// 外观（颜色/透明度/置顶）仍存 localStorage，业务配置（token/watches）在 Rust 侧 config.json
+// 主窗口：引导页 + 事件流 + 监听概览。添加/编辑/设置全部在 manage 窗口（emit 跨窗口联动）
 
 const { getCurrentWindow } = window.__TAURI__.window;
 const { invoke } = window.__TAURI__.core;
@@ -21,7 +20,7 @@ function saveSettings(patch) {
 
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
-  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${(n) & 255}`;
 }
 
 function applyAppearance() {
@@ -52,7 +51,16 @@ let config = { token: null, watches: [] };
 
 async function refreshConfig() {
   config = await invoke("get_config");
-  updateTokenState();
+}
+
+// 配置可能被管理窗口改动，焦点回来时重拉一遍，避免主页展示过期状态
+async function syncFromRust() {
+  try {
+    await refreshConfig();
+  } catch {
+    return;
+  }
+  goDefaultView();
 }
 
 function goDefaultView() {
@@ -64,25 +72,11 @@ function goDefaultView() {
   }
 }
 
-function updateTokenState() {
-  const el = document.getElementById("token-state");
-  const input = document.getElementById("input-token");
-  if (config.token) {
-    el.textContent = "已设置";
-    el.style.color = "#7CFC9B";
-    input.value = "";
-    input.placeholder = "已保存，输入新值可覆盖";
-  } else {
-    el.textContent = "未设置";
-    el.style.color = "";
-    input.value = "";
-    input.placeholder = "ghp_... （仅存本机）";
-  }
-  document.getElementById("input-proxy").value = config.proxy || "";
-  document.getElementById("input-notify").checked = config.notify !== false;
+// ---- 监听项概览（只读，管理/编辑在 manage 窗口） ----
+function watchTitle(w) {
+  return w.title || (w.number != null ? `${w.repo} #${w.number}` : w.repo);
 }
 
-// ---- 监听项渲染 ----
 function watchTags(w) {
   if (w.number != null) {
     const tags = [
@@ -109,7 +103,7 @@ function renderWatchList() {
     const row = document.createElement("div");
     row.className = "watch-row fade-up";
     row.innerHTML = `<span class="watch-repo"></span><span class="watch-tags"></span>`;
-    row.querySelector(".watch-repo").textContent = w.repo;
+    row.querySelector(".watch-repo").textContent = watchTitle(w);
     row.querySelector(".watch-tags").textContent = watchTags(w);
     const del = document.createElement("button");
     del.className = "watch-del";
@@ -117,6 +111,7 @@ function renderWatchList() {
     del.title = "移除监听";
     del.addEventListener("click", async () => {
       config = await invoke("remove_watch", { id: w.id });
+      window.__TAURI__.event.emit("ghr-config-changed").catch(() => {});
       goDefaultView();
     });
     row.appendChild(del);
@@ -179,103 +174,15 @@ function addEventCards(events) {
 document.getElementById("btn-min").addEventListener("click", () => getCurrentWindow().minimize());
 document.getElementById("btn-close").addEventListener("click", () => getCurrentWindow().close());
 
-// ---- 视图切换入口 ----
-document.getElementById("btn-settings").addEventListener("click", async () => {
-  await refreshConfig();
-  document.getElementById("input-autostart").checked = await invoke("get_autostart");
-  showView("view-settings");
+// 设置/管理/添加入口：开（或唤起）独立管理窗口
+document.getElementById("btn-settings").addEventListener("click", () => {
+  invoke("open_manage").catch((err) => console.warn("打开管理窗口失败:", err));
 });
-document.getElementById("btn-guide-start").addEventListener("click", () => showView("view-add"));
-document.getElementById("btn-back").addEventListener("click", goDefaultView);
-
-// ---- 添加监听：自动识别 owner/name 或 Issue/PR 链接 ----
-const GH_URL_RE = /github\.com\/([\w.-]+)\/([\w.-]+)\/(?:issues|pull)\/(\d+)/i;
-
-function parseTarget(raw) {
-  const s = raw.trim().replace(/^https?:\/\//, "");
-  const m = s.match(GH_URL_RE);
-  if (m) return { repo: `${m[1]}/${m[2]}`, number: Number(m[3]) };
-  if (/^[\w.-]+\/[\w.-]+$/.test(s.replace(/\/+$/, ""))) {
-    return { repo: s.replace(/\/+$/, ""), number: null };
-  }
-  return null;
-}
-
-function refreshAddOptions() {
-  const { number } = parseTarget(document.getElementById("input-target").value) || {};
-  document.getElementById("repo-options").classList.toggle("hidden", number != null);
-  document.getElementById("item-options").classList.toggle("hidden", number == null);
-}
-
-document.getElementById("input-target").addEventListener("input", refreshAddOptions);
-
+document.getElementById("btn-guide-start").addEventListener("click", () => {
+  invoke("open_manage").catch((err) => console.warn("打开管理窗口失败:", err));
+});
 document.getElementById("btn-add-watch").addEventListener("click", () => {
-  document.getElementById("input-target").value = "";
-  document.getElementById("add-error").classList.add("hidden");
-  refreshAddOptions();
-  showView("view-add");
-});
-document.getElementById("btn-add-cancel").addEventListener("click", goDefaultView);
-
-document.getElementById("btn-add-confirm").addEventListener("click", async () => {
-  const errEl = document.getElementById("add-error");
-  const parsed = parseTarget(document.getElementById("input-target").value);
-  if (!parsed) {
-    errEl.textContent = "无法识别：请输入 owner/name 或完整的 Issue/PR 链接";
-    errEl.classList.remove("hidden");
-    return;
-  }
-  try {
-    config = await invoke("add_watch", {
-      repo: parsed.repo,
-      number: parsed.number,
-      issues: document.getElementById("chk-issues").checked,
-      prs: document.getElementById("chk-prs").checked,
-      releases: document.getElementById("chk-releases").checked,
-      comments: document.getElementById("chk-comments").checked,
-      stateChange: document.getElementById("chk-state").checked,
-    });
-    goDefaultView();
-  } catch (err) {
-    errEl.textContent = String(err);
-    errEl.classList.remove("hidden");
-  }
-});
-
-// ---- 设置项 ----
-document.getElementById("input-token").addEventListener("change", async (e) => {
-  const val = e.target.value.trim();
-  config = await invoke("set_token", { token: val || null });
-  updateTokenState();
-});
-
-document.getElementById("input-proxy").addEventListener("change", async (e) => {
-  config = await invoke("set_proxy", { proxy: e.target.value.trim() || null });
-});
-
-document.getElementById("input-notify").addEventListener("change", async (e) => {
-  config = await invoke("set_notify", { notify: e.target.checked });
-});
-
-document.getElementById("input-autostart").addEventListener("change", async (e) => {
-  try {
-    e.target.checked = await invoke("set_autostart", { enable: e.target.checked });
-  } catch (err) {
-    console.warn("设置开机自启失败:", err);
-    e.target.checked = await invoke("get_autostart");
-  }
-});
-
-document.getElementById("input-color").addEventListener("input", (e) => {
-  saveSettings({ color: e.target.value });
-  applyAppearance();
-});
-
-document.getElementById("input-opacity").addEventListener("input", (e) => {
-  const v = Number(e.target.value);
-  document.getElementById("opacity-val").textContent = `${v}%`;
-  saveSettings({ opacity: v });
-  applyAppearance();
+  invoke("open_manage").catch((err) => console.warn("打开管理窗口失败:", err));
 });
 
 function applyWindowMode() {
@@ -286,18 +193,8 @@ function applyWindowMode() {
   });
 }
 
-document.getElementById("input-topmost").addEventListener("change", (e) => {
-  saveSettings({ topmost: e.target.checked });
-  applyWindowMode();
-});
-
 // ---- 初始化 ----
 (async function init() {
-  const { color = "#4a90d9", opacity = 70, topmost = false } = loadSettings();
-  document.getElementById("input-color").value = color;
-  document.getElementById("input-opacity").value = opacity;
-  document.getElementById("opacity-val").textContent = `${opacity}%`;
-  document.getElementById("input-topmost").checked = topmost;
   applyAppearance();
   applyWindowMode();
 
@@ -308,6 +205,14 @@ document.getElementById("input-topmost").addEventListener("change", (e) => {
   }
   goDefaultView();
 
+  // 无任何监听时自动打开管理窗口引导用户添加
+  if (!config.watches || config.watches.length === 0) {
+    invoke("open_manage").catch(() => {});
+  }
+  // 启动竞态兜底：配置在两窗口同时初始化期间可能未就绪
+  setTimeout(syncFromRust, 1500);
+  window.addEventListener("focus", syncFromRust);
+
   listen("ghr-events", (e) => {
     if (Array.isArray(e.payload)) addEventCards(e.payload);
   });
@@ -317,4 +222,10 @@ document.getElementById("input-topmost").addEventListener("change", (e) => {
     el.textContent = `⚠ 轮询失败：${e.payload}（检查网络/代理后等待下轮自动重试）`;
     el.classList.remove("hidden");
   });
+
+  // 管理窗口改了配置（增删监听等），主窗口同步刷新
+  listen("ghr-config-changed", () => syncFromRust());
+
+  // 管理窗口改了外观，实时同步主窗口
+  listen("ghr-appearance", () => applyAppearance());
 })();

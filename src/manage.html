@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="manage.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>监听管理 - GitHub 通知</title>
+  </head>
+  <body>
+    <div id="frame" class="manage-frame">
+      <header id="titlebar" data-tauri-drag-region>
+        <span id="title" data-tauri-drag-region>⭐ 监听管理</span>
+        <div class="titlebar-btns">
+          <button id="btn-min" class="tb-btn" title="最小化">—</button>
+          <button id="btn-close" class="tb-btn tb-close" title="关闭">×</button>
+        </div>
+      </header>
+
+      <!-- Tab 切换 -->
+      <nav id="tab-bar">
+        <button class="tab-btn active" data-tab="tab-watches">监听</button>
+        <button class="tab-btn" data-tab="tab-settings">设置</button>
+      </nav>
+
+      <!-- Tab 1：监听管理 -->
+      <section id="tab-watches" class="tab-panel">
+        <!-- 内嵌添加表单（原主窗口添加页迁入） -->
+        <div id="add-form" class="hidden">
+          <div class="form-row">
+            <label for="input-target">仓库（owner/name）或 Issue/PR 链接</label>
+            <input id="input-target" type="text" placeholder="microsoft/vscode 或 github.com/.../issues/123" />
+          </div>
+          <div class="form-row" id="repo-options">
+            <label>监听内容（仓库级）</label>
+            <div class="check-row">
+              <label><input type="checkbox" id="chk-issues" checked /> 新 Issue</label>
+              <label><input type="checkbox" id="chk-prs" checked /> 新 PR</label>
+              <label><input type="checkbox" id="chk-releases" /> 新 Release</label>
+            </div>
+          </div>
+          <div class="form-row hidden" id="item-options">
+            <label>监听内容（单条颗粒度）</label>
+            <div class="check-row">
+              <label><input type="checkbox" id="chk-comments" checked /> 新评论</label>
+              <label><input type="checkbox" id="chk-state" checked /> 状态开关变更</label>
+            </div>
+          </div>
+          <p id="add-error" class="error-text hidden"></p>
+          <div class="btn-row" style="margin-bottom: 12px;">
+            <button id="btn-add-confirm" class="btn-primary">添加</button>
+            <button id="btn-add-cancel" class="btn-plain" style="margin-top: 0;">取消</button>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="search-box">
+            <input id="manage-search" type="text" placeholder="🔍 搜索仓库 / 单条目标…" />
+          </div>
+          <button id="btn-sort" class="sort-btn" title="切换排序">↓ 最近添加</button>
+        </div>
+
+        <div class="body-row">
+          <aside id="group-nav"></aside>
+          <div id="manage-list"></div>
+        </div>
+
+        <footer class="manage-footer">
+          <span id="manage-stat"></span>
+          <button id="btn-manage-add" class="btn-primary">+ 添加监听</button>
+        </footer>
+      </section>
+
+      <!-- Tab 2：设置（原主窗口设置页整体迁入） -->
+      <section id="tab-settings" class="tab-panel hidden">
+        <div class="form-row fade-up">
+          <label for="input-proxy">网络代理（访问 GitHub 用）</label>
+          <input id="input-proxy" type="text" placeholder="留空 = 走系统代理；例如 http://127.0.0.1:7890" />
+          <p class="hint">国内直连 api.github.com 通常不通，需代理软件在跑。</p>
+        </div>
+        <div class="form-row fade-up delay-1">
+          <label for="input-token">GitHub PAT（令牌）</label>
+          <div class="token-row">
+            <input id="input-token" type="password" placeholder="ghp_... （仅存本机）" />
+            <span id="token-state" class="token-state">未设置</span>
+          </div>
+          <p class="hint">只需要 <code>repo</code>（或只读 notifications）权限。未配置也能用，但 API 限流 60 次/小时。</p>
+        </div>
+        <div class="form-row fade-up delay-1">
+          <label for="input-color">背景颜色</label>
+          <input id="input-color" type="color" value="#4a90d9" />
+        </div>
+        <div class="form-row fade-up delay-2">
+          <label for="input-opacity">不透明度 <span id="opacity-val">70%</span></label>
+          <input id="input-opacity" type="range" min="20" max="95" value="70" />
+        </div>
+        <div class="form-row toggle-row fade-up delay-3">
+          <label class="toggle-label" for="input-topmost">窗口置顶</label>
+          <input id="input-topmost" type="checkbox" />
+          <span class="hint-inline">关闭 = 贴桌面（在图标之上、所有普通窗口之下）</span>
+        </div>
+        <div class="form-row toggle-row fade-up delay-3">
+          <label class="toggle-label" for="input-notify">系统通知弹窗</label>
+          <input id="input-notify" type="checkbox" checked />
+        </div>
+        <div class="form-row toggle-row fade-up delay-3">
+          <label class="toggle-label" for="input-autostart">开机自启</label>
+          <input id="input-autostart" type="checkbox" />
+        </div>
+      </section>
+    </div>
+    <script src="manage.js"></script>
+  </body>
+</html>

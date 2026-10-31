@@ -93,9 +93,38 @@ fn add_watch(
             releases,
             comments,
             state_change,
+            title: None,
+            created: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
         })
     });
     Ok(state.config.lock().unwrap().clone())
+}
+
+#[tauri::command]
+fn update_watch(state: tauri::State<Arc<AppState>>, id: String, title: Option<String>) -> Config {
+    // 空串 = 恢复默认显示名
+    let title = title.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    state.with_config(|cfg| {
+        if let Some(w) = cfg.watches.iter_mut().find(|w| w.id == id) {
+            w.title = title;
+        }
+    });
+    state.config.lock().unwrap().clone()
+}
+
+// 管理窗口在 tauri.conf.json 静态声明（visible:false），这里只负责唤起；
+// 运行时建窗在 Windows 上有白屏/不渲染的毛病，故不走 WebviewWindowBuilder
+#[tauri::command]
+fn open_manage(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("manage") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    Err("管理窗口未初始化".into())
 }
 
 #[tauri::command]
@@ -282,8 +311,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 点关闭 = 隐藏到托盘，退出走托盘菜单
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            // 两个窗口点关闭都只隐藏：主窗口藏到托盘，管理窗口藏起来以便再次唤起
+            if matches!(window.label(), "main" | "manage")
+                && let tauri::WindowEvent::CloseRequested { api, .. } = event
+            {
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -297,7 +328,9 @@ pub fn run() {
             set_autostart,
             get_autostart,
             add_watch,
-            remove_watch
+            update_watch,
+            remove_watch,
+            open_manage
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
