@@ -87,15 +87,71 @@ fn escape_at(text: &str) -> String {
     text.replace('@', "\\u0040")
 }
 
+// 按行分段：优先在换行处切断，保证 GitHub 链接不会被拦腰截断
 fn split_text(text: &str) -> Vec<String> {
     if text.is_empty() {
         return vec![String::new()];
     }
-    text.chars()
-        .collect::<Vec<_>>()
-        .chunks(MAX_LEN)
-        .map(|c| c.iter().collect())
-        .collect()
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_len = 0usize;
+
+    for line in text.split('\n') {
+        let line_len = line.chars().count();
+        // 单行本身超上限（极长链接等）：先收尾当前段，再按上限硬切
+        if line_len > MAX_LEN {
+            if !cur.is_empty() {
+                parts.push(std::mem::take(&mut cur));
+                cur_len = 0;
+            }
+            for chunk in line.chars().collect::<Vec<_>>().chunks(MAX_LEN) {
+                parts.push(chunk.iter().collect());
+            }
+            continue;
+        }
+        let grow = if cur.is_empty() { line_len } else { line_len + 1 };
+        if !cur.is_empty() && cur_len + grow > MAX_LEN {
+            parts.push(std::mem::take(&mut cur));
+            cur_len = 0;
+        }
+        if !cur.is_empty() {
+            cur.push('\n');
+            cur_len += 1;
+        }
+        cur.push_str(line);
+        cur_len += line_len;
+    }
+    if !cur.is_empty() || parts.is_empty() {
+        parts.push(cur);
+    }
+    parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_never_breaks_a_link() {
+        let link = format!("https://github.com/o/r/issues/{}", "9".repeat(120));
+        let block = format!("o/r #1 标题\n{link}");
+        let text = (0..40).map(|_| block.clone()).collect::<Vec<_>>().join("\n");
+
+        let parts = split_text(&text);
+        assert!(parts.len() > 1, "超过上限应分段");
+        for p in &parts {
+            assert!(
+                p.chars().count() <= MAX_LEN,
+                "分段长度不得超过上限: {}",
+                p.chars().count()
+            );
+            for line in p.split('\n').filter(|l| l.starts_with("https://")) {
+                assert_eq!(line, link, "链接必须完整落在同一段同一行");
+            }
+        }
+        // 段落拼回原文不应丢内容
+        assert_eq!(parts.join("\n"), text);
+    }
 }
 
 // 推送到 QQ 私信；返回成功发送的分段数

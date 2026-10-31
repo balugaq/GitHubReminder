@@ -314,13 +314,41 @@ fn restart_relay(state: &AppState) {
     *state.relay.lock().unwrap() = Some(handle);
 }
 
+// QQ 推送正文逐条列，每条紧跟其 GitHub 链接；条数上限防单次刷屏
+const MAX_QQ_ITEMS: usize = 8;
+
+fn qq_summary(events: &[github::Event]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for ev in events.iter().take(MAX_QQ_ITEMS) {
+        // 与 toast 口径一致：评论不展开内容，链接指向具体评论
+        let title = if ev.kind == "comment" {
+            "有新消息".to_string()
+        } else {
+            ev.title.clone()
+        };
+        lines.push(format!(
+            "{}{} {}",
+            ev.repo,
+            ev.number.map(|n| format!(" #{n}")).unwrap_or_default(),
+            title
+        ));
+        if !ev.url.is_empty() {
+            lines.push(ev.url.clone());
+        }
+    }
+    if events.len() > MAX_QQ_ITEMS {
+        lines.push(format!("…以及另外 {} 条新动态", events.len() - MAX_QQ_ITEMS));
+    }
+    lines.join("\n")
+}
+
 // 有新事件时推送：自动配置开 = 直调内置中转（需端口+凭证齐全）；
 // 自动配置关 = POST 到外部已有中转服务（只需端口，凭证由外部服务持有）
 fn spawn_qq_push(cfg: &Config, events: &[github::Event]) {
     if !cfg.qq_notify || events.is_empty() {
         return;
     }
-    let text = format!("[GitHubReminder]\n{}", toast_summary(events));
+    let text = format!("[GitHubReminder]\n{}", qq_summary(events));
     if cfg.qq_autoconfig {
         let Some(rc) = relay_cfg_of(cfg) else {
             println!("[qq] 自动配置开但端口/凭证未配全，跳过 QQ 推送");
