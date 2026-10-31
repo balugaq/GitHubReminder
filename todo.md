@@ -40,6 +40,17 @@
   - ⑤ 关 Issue/PR 显示排查：渲染链路（KIND_LABEL/buildCard/CSS 配色）本来就没缺，根因是老监听改不了勾选 + add_watch 同 repo 去重导致关事件从未被轮询——④即解药，无额外代码。
   - clippy -D warnings 零警告。视觉待主人目视确认。
   - 修正（同日二轮）：① Watch 序列化是 camelCase，JS 误读 snake_case 的 closed_issues/closed_prs/state_change 恒 undefined → 编辑表单勾选不回显、列表徽标不出现（老 3 项 issues/prs/releases 碰巧两写法同名才正常）；已统一改读 closedIssues/closedPrs/stateChange。② 「全部」「单条监听」导航行漏绑 click 无响应；已把点击处理收敛进 mkNavRow。
+- [ ] **任务栏图标仍是旧图标**（软件图标已换，任务栏缓存/未跟随新图标，需排查修复——常见原因：Windows 图标缓存、未设置所有窗口尺寸的图标资源、tauri.conf icons 配置不全）。
+- [ ] **QQ 推送文案改为多行卡片式**（参照主人 2026-11-01 提供截图的下面那种样式）：
+  ```
+  [GitHubReminder] 通知 · GitHub 动态
+  PR #459 · ytd9527/NetworksExpansion
+  fix: 修改元件转运台逻辑
+  https://github.com/ytd9527/NetworksExpansion/pull/459
+  ```
+  即：第一行应用名+通知类别，第二行类型+编号+仓库，第三行标题，第四行链接（issue/pr/release 各自拼对应 URL）。当前是「#459 fix: 标题 ...以及另外 N 条新动态」的聚合一行式，要改。
+- [ ] **拉取可靠性：不依赖时间戳判断新事件**——GitHub 拉取有时会失败，改为自添加仓库后比对「最新几条是否已在记录里」来判定增量（类似游标兜底：每轮取最新 N 条，逐条查 events 已存则跳过，避免基于 updated_at/时间窗漏报）。与现有 cursor 机制的关系需梳理，避免双重判定打架。
+- [ ] **添加仓库时弹出 Issue/PR 选择弹窗**：输入仓库后弹「GitHub Issue/PR 界面」弹窗，列出该仓库的 issues/prs 供勾选，勾中的自动附带为该 repo 下的单条监听（复用现有单条颗粒度 Watch），免去手动输编号。依赖 GitHub 列表 API（分页、开/闭状态筛选）。
 - [ ] Explorer 重启后嵌入窗口的父级失效处理（检测父窗口销毁 → 自动重嵌）。
 - [x] **嵌入模式下键盘输入验证**（完成 2026-10-31，主人实测 PAT 输入框在 WorkerW 子窗口中可正常打字）。
 - [x] **PAT 明文存储 → 迁移到 Windows 凭据管理器加密**（完成 2026-10-31 @master工作区直改，未提交待验收）  - 实现：Config.token 改 `#[serde(skip)]`（内存持有，config.json 不再落明文）；store.rs 新增 save_token/load_token 走 keyring 3（windows-native 凭据管理器，服务名 GitHubReminder/账户 pat）。

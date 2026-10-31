@@ -51,16 +51,21 @@ impl Default for Watch {
     }
 }
 
+// 通知实体：以 issue/pr/release 为单位聚合后的卡片。同一 repo+number 的多条变化事件
+// 合并成一张卡，updated_at 取最近一次变化，有新动态时 status 重置为未读。
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
-pub struct StoredEvent {
-    pub kind: String, // "issue" | "pr" | "release" | "comment" | "state"
-    pub repo: String,
-    pub number: Option<u64>,
+pub struct Entity {
+    pub kind: String,            // 实体类型: "issue" | "pr" | "release"
+    pub repo: String,            // owner/name
+    pub number: Option<u64>,     // issue/PR 编号；release 用其 id 保证唯一
     pub title: String,
     pub url: String,
-    pub created_at: String,
-    pub read: bool,
+    pub state: String,           // "open" | "closed" | "published"
+    pub last_event_kind: String, // 最近一次变化类型: "open" | "comment" | "state" | "closed" | "release"
+    pub updated_at: String,      // 最近变化时间 (ISO 8601)，排序键
+    pub status: String,          // "unread" | "read" | "in_progress" | "done"（默认 unread）
+    pub pinned: bool,            // 用户显式钉住（默认 false，最多 3 个）
 }
 
 fn default_true() -> bool {
@@ -100,9 +105,10 @@ pub struct Config {
     pub cursor_comment: HashMap<String, i64>,     // watch_id -> 最后一条评论 id
     pub cursor_state: HashMap<String, String>,    // watch_id -> 最后见到的 state (open/closed)
     pub cursor_closed: HashMap<String, String>,   // watch_id -> 最后见到的 closed_at
-    // 通知持久化（上限 200 条，超出丢最旧），read 由前端点卡时经 mark_read 置位
+    // 通知实体（按 issue/pr/release 聚合，上限 200 条，超出丢最旧）；
+    // status / pinned 由前端经对应命令置位。旧版 events 字段不兼容，serde 忽略即丢弃（不迁移）。
     #[serde(default)]
-    pub events: Vec<StoredEvent>,
+    pub entities: Vec<Entity>,
     // 统计：维度("repo" 或 "repo#n") -> 类型(kind) -> 次数，跨重启累计
     #[serde(default)]
     pub stats: BTreeMap<String, BTreeMap<String, u64>>,

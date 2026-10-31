@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use store::{Config, StoredEvent, Watch};
+use store::{Config, Entity, Watch};
 use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_notification::NotificationExt;
@@ -435,20 +435,46 @@ fn toggle_main_window(app: &tauri::AppHandle) {
     }
 }
 
-const MAX_EVENTS: usize = 200;
+const MAX_ENTITIES: usize = 200;
 
-// 新事件落库（防重启丢失）+ 按仓库/单条两个维度累计各类型次数
-fn record_events(cfg: &mut Config, events: &[github::Event]) {
+// 把变化事件 upsert 进实体表：同一 repo+number 聚合为一卡，updated_at 取最新；
+// 有新动态（时间更新或状态/类型变化）则 status 重置为未读。同时累计 stats。
+fn record_entities(cfg: &mut Config, events: &[github::Event]) {
     for ev in events {
-        cfg.events.push(StoredEvent {
-            kind: ev.kind.clone(),
-            repo: ev.repo.clone(),
-            number: ev.number,
-            title: ev.title.clone(),
-            url: ev.url.clone(),
-            created_at: ev.created_at.clone(),
-            read: false,
-        });
+        let (kind, last_kind, state) = classify(ev);
+        if let Some(e) = cfg.entities.iter_mut().find(|e| {
+            e.repo.eq_ignore_ascii_case(&ev.repo) && e.number == ev.number
+        }) {
+            // 评论不改 state，不视为变化；其余按时间/状态/类型判断
+            let changed = ev.created_at > e.updated_at
+                || e.last_event_kind != last_kind
+                || (!state.is_empty() && e.state != state);
+            e.last_event_kind = last_kind.clone();
+            e.updated_at = ev.created_at.clone();
+            if !ev.title.is_empty() {
+                e.title = ev.title.clone();
+            }
+            e.url = ev.url.clone();
+            if !state.is_empty() {
+                e.state = state.clone();
+            }
+            if changed {
+                e.status = "unread".into();
+            }
+        } else {
+            cfg.entities.push(Entity {
+                kind,
+                repo: ev.repo.clone(),
+                number: ev.number,
+                title: ev.title.clone(),
+                url: ev.url.clone(),
+                state,
+                last_event_kind: last_kind,
+                updated_at: ev.created_at.clone(),
+                status: "unread".into(),
+                pinned: false,
+            });
+        }
         let bump = |m: &mut std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>, key: String| {
             *m.entry(key).or_default().entry(ev.kind.clone()).or_insert(0) += 1;
         };
@@ -457,9 +483,44 @@ fn record_events(cfg: &mut Config, events: &[github::Event]) {
             bump(&mut cfg.stats, format!("{}#{n}", ev.repo));
         }
     }
-    let len = cfg.events.len();
-    if len > MAX_EVENTS {
-        cfg.events.drain(..len - MAX_EVENTS);
+    let len = cfg.entities.len();
+    if len > MAX_ENTITIES {
+        // 丢最旧（updated_at 最小）的，保留最近 200 条
+        cfg.entities.sort_by(|a, b| a.updated_at.cmp(&b.updated_at));
+        cfg.entities.drain(..len - MAX_ENTITIES);
+    }
+}
+
+// 从变化事件推断：实体类型 / 最近变更类型 / 当前状态
+fn classify(ev: &github::Event) -> (String, String, String) {
+    let is_pr = ev.url.contains("/pull/");
+    match ev.kind.as_str() {
+        "release" => ("release".into(), "release".into(), "published".into()),
+        "state" => {
+            let state = if ev.title.contains("→ closed") {
+                "closed"
+            } else {
+                "open"
+            };
+            (
+                (if is_pr { "pr" } else { "issue" }).into(),
+                "state".into(),
+                state.into(),
+            )
+        }
+        "comment" => (
+            (if is_pr { "pr" } else { "issue" }).into(),
+            "comment".into(),
+            String::new(),
+        ),
+        "closed_issue" | "closed_pr" => (
+            (if is_pr { "pr" } else { "issue" }).into(),
+            "closed".into(),
+            "closed".into(),
+        ),
+        "issue" => ("issue".into(), "open".into(), "open".into()),
+        "pr" => ("pr".into(), "open".into(), "open".into()),
+        other => (other.to_string(), other.to_string(), String::new()),
     }
 }
 
@@ -473,7 +534,7 @@ async fn backfill_14d(app: tauri::AppHandle, state: tauri::State<'_, Arc<AppStat
     if count > 0 {
         {
             let mut c = st.config.lock().unwrap();
-            record_events(&mut c, &events);
+            record_entities(&mut c, &events);
             store::save(&st.path, &c);
         }
         let _ = app.emit("ghr-events", &events);
@@ -516,7 +577,7 @@ async fn do_poll_inner(app: &tauri::AppHandle, state: &AppState) -> u64 {
         let mut cfg = state.config.lock().unwrap().clone();
         let (events, err) = github::poll_all(&mut cfg).await;
         if !events.is_empty() {
-            record_events(&mut cfg, &events);
+            record_entities(&mut cfg, &events);
         }
         // 只有游标可能变化，无事件时也照常落盘（增量小，可接受）
         *state.config.lock().unwrap() = cfg;
@@ -611,9 +672,9 @@ async fn poll_now(
 fn mark_read(state: tauri::State<Arc<AppState>>, repo: String, number: Option<u64>) {
     if let Some(n) = number {
         state.with_config(|cfg| {
-            for ev in cfg.events.iter_mut() {
-                if ev.repo.eq_ignore_ascii_case(&repo) && ev.number == Some(n) {
-                    ev.read = true;
+            for e in cfg.entities.iter_mut() {
+                if e.repo.eq_ignore_ascii_case(&repo) && e.number == Some(n) {
+                    e.status = "read".into();
                 }
             }
         });
@@ -622,8 +683,10 @@ fn mark_read(state: tauri::State<Arc<AppState>>, repo: String, number: Option<u6
 }
 
 #[tauri::command]
-fn get_events(state: tauri::State<Arc<AppState>>) -> Vec<StoredEvent> {
-    state.config.lock().unwrap().events.clone()
+fn get_events(state: tauri::State<Arc<AppState>>) -> Vec<Entity> {
+    let mut v = state.config.lock().unwrap().entities.clone();
+    v.sort_by(|a, b| b.updated_at.cmp(&a.updated_at)); // 最近变更在上
+    v
 }
 
 #[tauri::command]

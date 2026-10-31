@@ -82,31 +82,35 @@ function updateStatusHint() {
 
 // ---- 事件流 ----
 const KIND_LABEL = { issue: "Issue", pr: "PR", release: "Release", comment: "评论", state: "状态", closed_issue: "关Issue", closed_pr: "关PR" };
+// 实体最近一次变化的中文摘要 + 状态中文（Todo6：以 issue/pr/release 为单位的聚合卡片）
+const LAST_EVENT_LABEL = { open: "新建/开启", comment: "新评论", state: "状态变更", closed: "已关闭", release: "新版本" };
+const STATE_LABEL = { open: "进行中", closed: "已关闭", published: "已发布" };
 const MAX_HANGING = 3; // 悬挂位：最多 3 条未读置顶
 
-// 全量事件（含历史持久化），新事件追加，read 状态以后端为准
+// 全量事件（含历史持久化），新事件追加，状态以后端为准
 let allEvents = [];
 
-function eventKey(ev) {
-  return `${ev.kind}:${ev.repo}:${ev.number ?? ""}:${ev.created_at}`;
-}
-
 function buildCard(ev) {
+  const unread = ev.status !== "read";
   const card = document.createElement("a");
-  card.className = "event-card fade-up" + (ev.read ? " read" : " unread");
+  card.className = "event-card fade-up" + (unread ? " unread" : " read");
   card.href = ev.url;
   card.innerHTML =
     `<span class="event-kind kind-${ev.kind}">${KIND_LABEL[ev.kind] || ev.kind}</span>` +
     `<span class="event-repo"></span>` +
-    `<span class="event-title"></span>`;
+    `<span class="event-title"></span>` +
+    `<span class="event-sub"></span>`;
   card.querySelector(".event-repo").textContent =
     ev.repo + (ev.number != null ? ` #${ev.number}` : "");
   card.querySelector(".event-title").textContent = ev.title;
+  card.querySelector(".event-sub").textContent =
+    (LAST_EVENT_LABEL[ev.last_event_kind] || ev.last_event_kind) +
+    (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
   card.addEventListener("click", (e) => {
     e.preventDefault();
     // 已读粒度与 toast 去重一致：同一 issue/PR 一次读掉
     for (const other of allEvents) {
-      if (other.repo === ev.repo && other.number === ev.number) other.read = true;
+      if (other.repo === ev.repo && other.number === ev.number) other.status = "read";
     }
     invoke("mark_read", { repo: ev.repo, number: ev.number ?? null }).catch(() => {});
     renderFeed();
@@ -126,11 +130,16 @@ function renderFeed() {
     feed.appendChild(empty);
     return;
   }
+  // 按最近更新时间降序（后端已排，这里兜底）
+  const sorted = [...allEvents].sort((a, b) =>
+    (b.updated_at || "").localeCompare(a.updated_at || "")
+  );
   // 悬挂区：最近 3 条未读置顶高亮；其余进历史区（新在前）
-  const newestFirst = [...allEvents].reverse();
-  const hanging = newestFirst.filter((ev) => !ev.read).slice(0, MAX_HANGING);
-  const hangingKeys = new Set(hanging.map(eventKey));
-  const history = newestFirst.filter((ev) => !hangingKeys.has(eventKey(ev))).slice(0, 50);
+  const hanging = sorted.filter((ev) => ev.status !== "read").slice(0, MAX_HANGING);
+  const hangingKeys = new Set(hanging.map((ev) => `${ev.repo}:${ev.number}`));
+  const history = sorted
+    .filter((ev) => !hangingKeys.has(`${ev.repo}:${ev.number}`))
+    .slice(0, 50);
   const zone = document.createElement("div");
   zone.id = "hang-zone";
   for (const ev of hanging) zone.appendChild(buildCard(ev));
@@ -148,9 +157,14 @@ async function loadEvents() {
   renderFeed();
 }
 
-function addEvents(events) {
-  if (!Array.isArray(events)) return;
-  allEvents.push(...events.map((ev) => ({ ...ev, read: false })));
+async function addEvents() {
+  // 收到变化事件后直接从后端重拉已聚合的实体列表，避免前端自己维护 upsert
+  try {
+    allEvents = await invoke("get_events");
+  } catch (err) {
+    console.warn("拉取通知失败:", err);
+    return;
+  }
   renderFeed();
 }
 
