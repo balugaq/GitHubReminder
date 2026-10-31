@@ -19,6 +19,12 @@ pub struct Watch {
     pub comments: bool,
     #[serde(default)]
     pub state_change: bool,
+    // 用户自定义显示名；None 时前端回退到默认格式
+    #[serde(default)]
+    pub title: Option<String>,
+    // 添加时间（unix 秒），用于管理窗口排序
+    #[serde(default)]
+    pub created: u64,
 }
 
 impl Default for Watch {
@@ -32,6 +38,8 @@ impl Default for Watch {
             releases: false,
             comments: true,
             state_change: true,
+            title: None,
+            created: 0,
         }
     }
 }

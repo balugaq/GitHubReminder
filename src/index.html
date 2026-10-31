@@ -65,44 +65,6 @@
           </div>
         </section>
 
-        <!-- 设置页 -->
-        <section id="view-settings" class="view hidden">
-          <div class="form-row fade-up">
-            <label for="input-proxy">网络代理（访问 GitHub 用）</label>
-            <input id="input-proxy" type="text" placeholder="留空 = 走系统代理；例如 http://127.0.0.1:7890" />
-            <p class="hint">国内直连 api.github.com 通常不通，需代理软件在跑。</p>
-          </div>
-          <div class="form-row fade-up delay-1">
-            <label for="input-token">GitHub PAT（令牌）</label>
-            <div class="token-row">
-              <input id="input-token" type="password" placeholder="ghp_... （仅存本机）" />
-              <span id="token-state" class="token-state">未设置</span>
-            </div>
-            <p class="hint">只需要 <code>repo</code>（或只读 notifications）权限。未配置也能用，但 API 限流 60 次/小时。</p>
-          </div>
-          <div class="form-row fade-up delay-1">
-            <label for="input-color">背景颜色</label>
-            <input id="input-color" type="color" value="#4a90d9" />
-          </div>
-          <div class="form-row fade-up delay-2">
-            <label for="input-opacity">不透明度 <span id="opacity-val">70%</span></label>
-            <input id="input-opacity" type="range" min="20" max="95" value="70" />
-          </div>
-          <div class="form-row toggle-row fade-up delay-3">
-            <label class="toggle-label" for="input-topmost">窗口置顶</label>
-            <input id="input-topmost" type="checkbox" />
-            <span class="hint-inline">关闭 = 贴桌面（在图标之上、所有普通窗口之下）</span>
-          </div>
-          <div class="form-row toggle-row fade-up delay-3">
-            <label class="toggle-label" for="input-notify">系统通知弹窗</label>
-            <input id="input-notify" type="checkbox" checked />
-          </div>
-          <div class="form-row toggle-row fade-up delay-3">
-            <label class="toggle-label" for="input-autostart">开机自启</label>
-            <input id="input-autostart" type="checkbox" />
-          </div>
-          <button id="btn-back" class="btn-plain fade-up delay-3">← 返回</button>
-        </section>
       </main>
     </div>
     <script src="main.js"></script>

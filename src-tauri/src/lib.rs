@@ -93,9 +93,49 @@ fn add_watch(
             releases,
             comments,
             state_change,
+            title: None,
+            created: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
         })
     });
     Ok(state.config.lock().unwrap().clone())
+}
+
+#[tauri::command]
+fn update_watch(state: tauri::State<Arc<AppState>>, id: String, title: Option<String>) -> Config {
+    // 空串 = 恢复默认显示名
+    let title = title.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    state.with_config(|cfg| {
+        if let Some(w) = cfg.watches.iter_mut().find(|w| w.id == id) {
+            w.title = title;
+        }
+    });
+    state.config.lock().unwrap().clone()
+}
+
+// 管理窗口：已存在则唤起，否则新建 720x560
+#[tauri::command]
+fn open_manage(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("manage") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        "manage",
+        tauri::WebviewUrl::App("manage.html".into()),
+    )
+    .title("监听管理 - GitHub 通知")
+    .inner_size(720.0, 560.0)
+    .min_inner_size(600.0, 440.0)
+    .resizable(true)
+    .center()
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -266,8 +306,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 点关闭 = 隐藏到托盘，退出走托盘菜单
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            // 仅主窗口点关闭 = 隐藏到托盘；管理窗口正常关闭；退出走托盘菜单
+            if window.label() == "main"
+                && let tauri::WindowEvent::CloseRequested { api, .. } = event
+            {
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -281,7 +323,9 @@ pub fn run() {
             set_autostart,
             get_autostart,
             add_watch,
-            remove_watch
+            update_watch,
+            remove_watch,
+            open_manage
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
