@@ -295,8 +295,8 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 仅主窗口点关闭 = 隐藏到托盘；管理窗口正常关闭；退出走托盘菜单
-            if window.label() == "main"
+            // 两个窗口点关闭都只隐藏：主窗口藏到托盘，管理窗口藏起来以便再次唤起
+            if matches!(window.label(), "main" | "manage")
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
             {
                 api.prevent_close();

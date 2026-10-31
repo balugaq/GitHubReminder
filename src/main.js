@@ -1,4 +1,4 @@
-// 主窗口：引导页 / 事件流 / 添加页。设置与管理移到 manage 窗口（emit 跨窗口联动）
+// 主窗口：引导页 + 事件流 + 监听概览。添加/编辑/设置全部在 manage 窗口（emit 跨窗口联动）
 
 const { getCurrentWindow } = window.__TAURI__.window;
 const { invoke } = window.__TAURI__.core;
@@ -53,6 +53,16 @@ async function refreshConfig() {
   config = await invoke("get_config");
 }
 
+// 配置可能被管理窗口改动，焦点回来时重拉一遍，避免主页展示过期状态
+async function syncFromRust() {
+  try {
+    await refreshConfig();
+  } catch {
+    return;
+  }
+  goDefaultView();
+}
+
 function goDefaultView() {
   if (config.watches && config.watches.length > 0) {
     renderWatchList();
@@ -62,7 +72,7 @@ function goDefaultView() {
   }
 }
 
-// ---- 监听项渲染（列表页只读概览，管理/编辑在 manage 窗口） ----
+// ---- 监听项概览（只读，管理/编辑在 manage 窗口） ----
 function watchTitle(w) {
   return w.title || (w.number != null ? `${w.repo} #${w.number}` : w.repo);
 }
@@ -164,68 +174,15 @@ function addEventCards(events) {
 document.getElementById("btn-min").addEventListener("click", () => getCurrentWindow().minimize());
 document.getElementById("btn-close").addEventListener("click", () => getCurrentWindow().close());
 
-// 设置/管理入口：开（或唤起）独立管理窗口
+// 设置/管理/添加入口：开（或唤起）独立管理窗口
 document.getElementById("btn-settings").addEventListener("click", () => {
   invoke("open_manage").catch((err) => console.warn("打开管理窗口失败:", err));
 });
-
-// ---- 视图切换入口 ----
-document.getElementById("btn-guide-start").addEventListener("click", () => showView("view-add"));
-document.getElementById("btn-back")?.addEventListener("click", goDefaultView);
-
-// ---- 添加监听：自动识别 owner/name 或 Issue/PR 链接 ----
-const GH_URL_RE = /github\.com\/([\w.-]+)\/([\w.-]+)\/(?:issues|pull)\/(\d+)/i;
-
-function parseTarget(raw) {
-  const s = raw.trim().replace(/^https?:\/\//, "");
-  const m = s.match(GH_URL_RE);
-  if (m) return { repo: `${m[1]}/${m[2]}`, number: Number(m[3]) };
-  if (/^[\w.-]+\/[\w.-]+$/.test(s.replace(/\/+$/, ""))) {
-    return { repo: s.replace(/\/+$/, ""), number: null };
-  }
-  return null;
-}
-
-function refreshAddOptions() {
-  const { number } = parseTarget(document.getElementById("input-target").value) || {};
-  document.getElementById("repo-options").classList.toggle("hidden", number != null);
-  document.getElementById("item-options").classList.toggle("hidden", number == null);
-}
-
-document.getElementById("input-target").addEventListener("input", refreshAddOptions);
-
-document.getElementById("btn-add-watch").addEventListener("click", () => {
-  document.getElementById("input-target").value = "";
-  document.getElementById("add-error").classList.add("hidden");
-  refreshAddOptions();
-  showView("view-add");
+document.getElementById("btn-guide-start").addEventListener("click", () => {
+  invoke("open_manage").catch((err) => console.warn("打开管理窗口失败:", err));
 });
-document.getElementById("btn-add-cancel").addEventListener("click", goDefaultView);
-
-document.getElementById("btn-add-confirm").addEventListener("click", async () => {
-  const errEl = document.getElementById("add-error");
-  const parsed = parseTarget(document.getElementById("input-target").value);
-  if (!parsed) {
-    errEl.textContent = "无法识别：请输入 owner/name 或完整的 Issue/PR 链接";
-    errEl.classList.remove("hidden");
-    return;
-  }
-  try {
-    config = await invoke("add_watch", {
-      repo: parsed.repo,
-      number: parsed.number,
-      issues: document.getElementById("chk-issues").checked,
-      prs: document.getElementById("chk-prs").checked,
-      releases: document.getElementById("chk-releases").checked,
-      comments: document.getElementById("chk-comments").checked,
-      stateChange: document.getElementById("chk-state").checked,
-    });
-    window.__TAURI__.event.emit("ghr-config-changed").catch(() => {});
-    goDefaultView();
-  } catch (err) {
-    errEl.textContent = String(err);
-    errEl.classList.remove("hidden");
-  }
+document.getElementById("btn-add-watch").addEventListener("click", () => {
+  invoke("open_manage").catch((err) => console.warn("打开管理窗口失败:", err));
 });
 
 function applyWindowMode() {
@@ -248,6 +205,14 @@ function applyWindowMode() {
   }
   goDefaultView();
 
+  // 无任何监听时自动打开管理窗口引导用户添加
+  if (!config.watches || config.watches.length === 0) {
+    invoke("open_manage").catch(() => {});
+  }
+  // 启动竞态兜底：配置在两窗口同时初始化期间可能未就绪
+  setTimeout(syncFromRust, 1500);
+  window.addEventListener("focus", syncFromRust);
+
   listen("ghr-events", (e) => {
     if (Array.isArray(e.payload)) addEventCards(e.payload);
   });
@@ -258,24 +223,8 @@ function applyWindowMode() {
     el.classList.remove("hidden");
   });
 
-  // 管理窗口发来的导航请求（引导/添加），主窗口可能处于隐藏态需先唤起
-  listen("ghr-nav", (e) => {
-    const view = e.payload;
-    if (typeof view !== "string") return;
-    getCurrentWindow().show().catch(() => {});
-    getCurrentWindow().setFocus().catch(() => {});
-    showView(view);
-  });
-
-  // 管理窗口改了配置（删除监听等），主窗口同步刷新
-  listen("ghr-config-changed", async () => {
-    try {
-      await refreshConfig();
-    } catch {
-      return;
-    }
-    goDefaultView();
-  });
+  // 管理窗口改了配置（增删监听等），主窗口同步刷新
+  listen("ghr-config-changed", () => syncFromRust());
 
   // 管理窗口改了外观，实时同步主窗口
   listen("ghr-appearance", () => applyAppearance());

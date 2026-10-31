@@ -139,11 +139,8 @@ function render() {
       <div class="empty-title">这里空空如也</div>
       <div class="empty-desc">添加仓库可以监听新 Issue / PR / Release；<br>贴一条 Issue 或 PR 链接，还能监听新评论和状态变更。</div>
       <button class="btn-primary">开始添加监听</button>`;
-    // 空态引导 = 走主窗口初次引导页流程（主窗口自行 show + showView("view-add")）
-    empty.querySelector("button").addEventListener("click", () => {
-      emit("ghr-nav", "view-add").catch((err) => console.warn("导航失败:", err));
-      getCurrentWindow().close();
-    });
+    // 空态引导 = 直接在本窗口展开添加表单
+    empty.querySelector("button").addEventListener("click", () => toggleAddForm(true));
     list.appendChild(empty);
     document.getElementById("manage-stat").textContent = "暂无监听";
     return;
@@ -235,10 +232,66 @@ document.getElementById("btn-sort").addEventListener("click", () => {
   render();
 });
 
-// 添加监听：复用主窗口添加页
+// ---- 内嵌添加表单（原主窗口添加页迁入） ----
+const GH_URL_RE = /github\.com\/([\w.-]+)\/([\w.-]+)\/(?:issues|pull)\/(\d+)/i;
+
+function parseTarget(raw) {
+  const s = raw.trim().replace(/^https?:\/\//, "");
+  const m = s.match(GH_URL_RE);
+  if (m) return { repo: `${m[1]}/${m[2]}`, number: Number(m[3]) };
+  if (/^[\w.-]+\/[\w.-]+$/.test(s.replace(/\/+$/, ""))) {
+    return { repo: s.replace(/\/+$/, ""), number: null };
+  }
+  return null;
+}
+
+function refreshAddOptions() {
+  const { number } = parseTarget(document.getElementById("input-target").value) || {};
+  document.getElementById("repo-options").classList.toggle("hidden", number != null);
+  document.getElementById("item-options").classList.toggle("hidden", number == null);
+}
+
+function toggleAddForm(show) {
+  document.getElementById("add-form").classList.toggle("hidden", !show);
+  if (show) {
+    document.getElementById("input-target").value = "";
+    document.getElementById("add-error").classList.add("hidden");
+    refreshAddOptions();
+    document.getElementById("input-target").focus();
+  }
+}
+
+document.getElementById("input-target").addEventListener("input", refreshAddOptions);
 document.getElementById("btn-manage-add").addEventListener("click", () => {
-  emit("ghr-nav", "view-add").catch((err) => console.warn("导航失败:", err));
-  getCurrentWindow().close();
+  toggleAddForm(document.getElementById("add-form").classList.contains("hidden"));
+});
+document.getElementById("btn-add-cancel").addEventListener("click", () => toggleAddForm(false));
+
+document.getElementById("btn-add-confirm").addEventListener("click", async () => {
+  const errEl = document.getElementById("add-error");
+  const parsed = parseTarget(document.getElementById("input-target").value);
+  if (!parsed) {
+    errEl.textContent = "无法识别：请输入 owner/name 或完整的 Issue/PR 链接";
+    errEl.classList.remove("hidden");
+    return;
+  }
+  try {
+    config = await invoke("add_watch", {
+      repo: parsed.repo,
+      number: parsed.number,
+      issues: document.getElementById("chk-issues").checked,
+      prs: document.getElementById("chk-prs").checked,
+      releases: document.getElementById("chk-releases").checked,
+      comments: document.getElementById("chk-comments").checked,
+      stateChange: document.getElementById("chk-state").checked,
+    });
+    emit("ghr-config-changed").catch(() => {});
+    toggleAddForm(false);
+    render();
+  } catch (err) {
+    errEl.textContent = String(err);
+    errEl.classList.remove("hidden");
+  }
 });
 
 // ---- 设置 tab（原主窗口设置逻辑迁入） ----

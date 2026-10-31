@@ -12,59 +12,28 @@
       <header id="titlebar" data-tauri-drag-region>
         <span id="title" data-tauri-drag-region>GitHub 通知</span>
         <div class="titlebar-btns">
-          <button id="btn-settings" class="tb-btn" title="设置">⚙</button>
+          <button id="btn-settings" class="tb-btn" title="监听管理 / 设置">⚙</button>
           <button id="btn-min" class="tb-btn" title="最小化">—</button>
           <button id="btn-close" class="tb-btn tb-close" title="关闭">×</button>
         </div>
       </header>
 
-      <!-- 主内容区 -->
+      <!-- 主内容区：只有引导页和事件流页，添加/编辑/设置都在管理窗口 -->
       <main id="content">
-        <!-- 引导页：无任何监听时显示 -->
         <section id="view-guide" class="view">
           <div class="guide-icon fade-up">🔔</div>
           <p class="fade-up delay-1">还没有任何监听对象</p>
-          <button id="btn-guide-start" class="btn-primary fade-up delay-2">开始使用</button>
+          <button id="btn-guide-start" class="btn-primary fade-up delay-2">打开监听管理</button>
         </section>
 
-        <!-- 监听列表页：事件流 + 监听项管理 -->
         <section id="view-list" class="view hidden">
           <p id="poll-error" class="error-text hidden"></p>
           <div id="event-feed">
             <p id="feed-empty" class="hint">暂无新事件。轮询每 60 秒一次，有新动态会自动浮现。</p>
           </div>
           <div id="watch-list"></div>
-          <button id="btn-add-watch" class="btn-primary fade-up delay-2">+ 添加监听</button>
+          <button id="btn-add-watch" class="btn-primary fade-up delay-2">⚙ 监听管理 / 添加</button>
         </section>
-
-        <!-- 添加监听页 -->
-        <section id="view-add" class="view hidden">
-          <div class="form-row fade-up">
-            <label for="input-target">仓库（owner/name）或 Issue/PR 链接</label>
-            <input id="input-target" type="text" placeholder="microsoft/vscode 或 github.com/.../issues/123" />
-          </div>
-          <div class="form-row fade-up delay-1" id="repo-options">
-            <label>监听内容（仓库级）</label>
-            <div class="check-row">
-              <label><input type="checkbox" id="chk-issues" checked /> 新 Issue</label>
-              <label><input type="checkbox" id="chk-prs" checked /> 新 PR</label>
-              <label><input type="checkbox" id="chk-releases" /> 新 Release</label>
-            </div>
-          </div>
-          <div class="form-row fade-up delay-1 hidden" id="item-options">
-            <label>监听内容（单条颗粒度）</label>
-            <div class="check-row">
-              <label><input type="checkbox" id="chk-comments" checked /> 新评论</label>
-              <label><input type="checkbox" id="chk-state" checked /> 状态开关变更</label>
-            </div>
-          </div>
-          <p id="add-error" class="error-text hidden"></p>
-          <div class="btn-row fade-up delay-2">
-            <button id="btn-add-confirm" class="btn-primary">添加</button>
-            <button id="btn-add-cancel" class="btn-plain">取消</button>
-          </div>
-        </section>
-
       </main>
     </div>
     <script src="main.js"></script>
