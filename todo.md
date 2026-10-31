@@ -19,7 +19,7 @@
   - 需求：① 通知支持已读/未读状态；② 悬挂机制——主界面最多悬挂 3 条通知；③ 统计功能——按 owner/repo 或 owner/repo/#issue/pr 维度统计每个通知类型出现次数；④ 新增「查看统计」入口（按钮）。
 - [x] **首次使用默认监听 microsoft/vscode**（完成 2026-10-31 @worktree/first-watch，已合并 master 08ee58d）
   - 实现：lib.rs setup 中检测 config.json 不存在 → 预置 microsoft/vscode 仓库级监听（issues+prs）并立即落盘。clippy -D warnings 零警告。
-- [ ] **仓库级监听配置增强：关 Issue / 关 PR 事件 + 默认勾选调整**。
+- [~] **仓库级监听配置增强：关 Issue / 关 PR 事件 + 默认勾选调整**（执行中 @master工作区直改，2026-10-31，主人指定不走 worktree）
   - 需求：① 仓库级监听增加「关 Issue」「关 PR」两类事件；② 新增监听的默认勾选：关 Issue、关 PR、Release 均默认勾选。
 - [ ] Explorer 重启后嵌入窗口的父级失效处理（检测父窗口销毁 → 自动重嵌）。
 - [ ] 嵌入模式下键盘输入验证：PAT 输入框在 WorkerW 子窗口里能否正常打字（概念对话里的已知坑，待主人实测）。

@@ -19,6 +19,8 @@ struct Issue {
     title: String,
     html_url: String,
     created_at: String,
+    // 关闭事件轮询用：closed_at 是关闭时刻，评论等 updated_at 变化不会误触发
+    closed_at: Option<String>,
     pull_request: Option<serde_json::Value>,
 }
 
@@ -128,6 +130,26 @@ async fn poll_all_inner(cfg: &mut Config) -> (Vec<Event>, Option<String>) {
                 Err(e) => {
                     let msg = format!("{}: {e}", w.repo);
                     eprintln!("[poll {}] {} 拉取失败", now_str(), w.repo);
+                    if first_err.is_none() {
+                        first_err = Some(msg);
+                    }
+                }
+            }
+        }
+        if w.closed_issues || w.closed_prs {
+            match poll_closed(&client, &w, cfg).await {
+                Ok(mut evs) => {
+                    println!(
+                        "[poll {}] {} closed: 拉取成功, 新事件 {} 条",
+                        now_str(),
+                        w.repo,
+                        evs.len()
+                    );
+                    events.append(&mut evs);
+                }
+                Err(e) => {
+                    let msg = format!("{} (closed): {e}", w.repo);
+                    eprintln!("[poll {}] {} closed 拉取失败", now_str(), w.repo);
                     if first_err.is_none() {
                         first_err = Some(msg);
                     }
@@ -310,6 +332,62 @@ async fn poll_issues(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> R
     }
     if let Some(c) = latest {
         cfg.cursor_issues.insert(w.id.clone(), c);
+    }
+    Ok(events)
+}
+
+/// 仓库级关闭事件：按 closed_at 游标报新关闭的 Issue/PR
+async fn poll_closed(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> Result<Vec<Event>, String> {
+    let url = format!(
+        "https://api.github.com/repos/{}/issues?state=closed&sort=updated&direction=desc&per_page=30",
+        w.repo
+    );
+    let items: Vec<Issue> = client
+        .get(&url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("{e:?}"))?
+        .json()
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+
+    let cursor = cfg.cursor_closed.get(&w.id).cloned();
+    let first_run = cursor.is_none();
+    let mut events = Vec::new();
+    let mut max_closed: Option<String> = None;
+
+    for i in items {
+        let Some(closed_at) = i.closed_at else {
+            continue;
+        };
+        if max_closed.as_ref().is_none_or(|m| *m < closed_at) {
+            max_closed = Some(closed_at.clone());
+        }
+        let is_pr = i.pull_request.is_some();
+        if (is_pr && !w.closed_prs) || (!is_pr && !w.closed_issues) {
+            continue;
+        }
+        if let Some(c) = &cursor
+            && closed_at <= *c
+        {
+            continue;
+        }
+        events.push(Event {
+            kind: if is_pr { "closed_pr" } else { "closed_issue" }.into(),
+            repo: w.repo.clone(),
+            number: Some(i.number),
+            title: i.title,
+            url: i.html_url,
+            created_at: closed_at,
+        });
+    }
+    // 首次只记游标，避免把存量已关闭的 issue 全报出来
+    if first_run {
+        events.clear();
+    }
+    if let Some(m) = max_closed {
+        cfg.cursor_closed.insert(w.id.clone(), m);
     }
     Ok(events)
 }

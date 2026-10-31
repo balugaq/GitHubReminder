@@ -71,6 +71,8 @@ fn add_watch(
     issues: bool,
     prs: bool,
     releases: bool,
+    closed_issues: bool,
+    closed_prs: bool,
     comments: bool,
     state_change: bool,
 ) -> Result<Config, String> {
@@ -80,8 +82,8 @@ fn add_watch(
     if number.is_some() && !comments && !state_change {
         return Err("单条监听至少要勾选一项（评论/状态变更）".into());
     }
-    if number.is_none() && !issues && !prs && !releases {
-        return Err("仓库监听至少要勾选一项（Issue/PR/Release）".into());
+    if number.is_none() && !issues && !prs && !releases && !closed_issues && !closed_prs {
+        return Err("仓库监听至少要勾选一项（Issue/PR/Release/关Issue/关PR）".into());
     }
     {
         let cfg = state.config.lock().unwrap();
@@ -99,6 +101,8 @@ fn add_watch(
             issues,
             prs,
             releases,
+            closed_issues,
+            closed_prs,
             comments,
             state_change,
             title: None,
@@ -143,6 +147,7 @@ fn remove_watch(state: tauri::State<Arc<AppState>>, id: String) -> Config {
         cfg.cursor_release.remove(&id);
         cfg.cursor_comment.remove(&id);
         cfg.cursor_state.remove(&id);
+        cfg.cursor_closed.remove(&id);
     });
     state.config.lock().unwrap().clone()
 }
@@ -434,6 +439,8 @@ pub fn run() {
                     issues: true,
                     prs: true,
                     releases: false,
+                    closed_issues: false,
+                    closed_prs: false,
                     comments: true,
                     state_change: true,
                     title: None,

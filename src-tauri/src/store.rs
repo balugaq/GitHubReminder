@@ -14,6 +14,11 @@ pub struct Watch {
     pub issues: bool,
     pub prs: bool,
     pub releases: bool,
+    // 仓库级关闭事件（closed_at 变化才报，评论不影响）
+    #[serde(default)]
+    pub closed_issues: bool,
+    #[serde(default)]
+    pub closed_prs: bool,
     // 单条颗粒度选项
     #[serde(default)]
     pub comments: bool,
@@ -35,7 +40,9 @@ impl Default for Watch {
             number: None,
             issues: true,
             prs: true,
-            releases: false,
+            releases: true,
+            closed_issues: true,
+            closed_prs: true,
             comments: true,
             state_change: true,
             title: None,
@@ -73,6 +80,7 @@ pub struct Config {
     pub cursor_release: HashMap<String, String>,  // watch_id -> 最后 release id
     pub cursor_comment: HashMap<String, i64>,     // watch_id -> 最后一条评论 id
     pub cursor_state: HashMap<String, String>,    // watch_id -> 最后见到的 state (open/closed)
+    pub cursor_closed: HashMap<String, String>,   // watch_id -> 最后见到的 closed_at
     // 通知持久化（上限 200 条，超出丢最旧），read 由前端点卡时经 mark_read 置位
     #[serde(default)]
     pub events: Vec<StoredEvent>,
