@@ -249,7 +249,23 @@ pub fn run() {
                 .app_data_dir()
                 .map(|d| d.join("config.json"))
                 .unwrap_or_else(|_| PathBuf::from("config.json"));
-            let cfg = store::load(&path);
+            // 首次使用（config.json 不存在）时自带一条 microsoft/vscode 监听，开箱即用
+            let first_run = !path.exists();
+            let mut cfg = store::load(&path);
+            if first_run {
+                cfg.watches.push(Watch {
+                    id: new_watch_id(),
+                    repo: "microsoft/vscode".into(),
+                    number: None,
+                    issues: true,
+                    prs: true,
+                    releases: false,
+                    comments: true,
+                    state_change: true,
+                });
+                store::save(&path, &cfg);
+                println!("[init] 首次使用，已预置监听 microsoft/vscode (issues+prs)");
+            }
             println!(
                 "[init] 配置: {} ({} 个监听, token: {})",
                 path.display(),
