@@ -85,6 +85,16 @@ pub fn now_str() -> String {
     chrono::Local::now().format("%H:%M:%S").to_string()
 }
 
+// 时间戳游标的兜底判定：条目已进过实体记录（且状态匹配）就不再报，
+// 防止 GitHub 返回的时间窗/游标异常时重报；实体被 200 条上限裁剪后仍以游标为准
+fn entity_seen(cfg: &Config, repo: &str, number: u64, closed_only: bool) -> bool {
+    cfg.entities.iter().any(|e| {
+        e.repo.eq_ignore_ascii_case(repo)
+            && e.number == Some(number)
+            && (!closed_only || e.state == "closed")
+    })
+}
+
 pub async fn poll_all(cfg: &mut Config) -> (Vec<Event>, Option<String>) {
     let t0 = std::time::Instant::now();
     let n_watches = cfg.watches.len();
@@ -365,6 +375,10 @@ async fn poll_issues(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> R
         {
             continue;
         }
+        // 增量兜底：已在实体记录里的条目不再报，不完全依赖 created_at 时间戳
+        if entity_seen(cfg, &w.repo, i.number, false) {
+            continue;
+        }
         events.push(Event {
             kind: if is_pr { "pr" } else { "issue" }.into(),
             repo: w.repo.clone(),
@@ -421,6 +435,10 @@ async fn poll_closed(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> R
         if let Some(c) = &cursor
             && closed_at <= *c
         {
+            continue;
+        }
+        // 增量兜底：状态已是 closed 的条目不再报关事件，不完全依赖 closed_at 时间戳
+        if entity_seen(cfg, &w.repo, i.number, true) {
             continue;
         }
         events.push(Event {
@@ -542,4 +560,36 @@ async fn poll_release(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> 
         author: rel.author.login.clone(),
         assignees: Vec::new(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Entity;
+
+    fn ent(repo: &str, number: u64, state: &str) -> Entity {
+        Entity {
+            repo: repo.into(),
+            number: Some(number),
+            state: state.into(),
+            ..Entity::default()
+        }
+    }
+
+    #[test]
+    fn entity_seen_matches_case_insensitive_and_state() {
+        let mut cfg = Config::default();
+        cfg.entities.push(ent("Owner/Repo", 7, "open"));
+        assert!(entity_seen(&cfg, "owner/repo", 7, false));
+        assert!(!entity_seen(&cfg, "owner/repo", 7, true), "open 的不算已关闭");
+        assert!(!entity_seen(&cfg, "owner/repo", 8, false), "编号不同不命中");
+    }
+
+    #[test]
+    fn entity_seen_closed_only_passes_when_state_closed() {
+        let mut cfg = Config::default();
+        cfg.entities.push(ent("o/r", 9, "closed"));
+        assert!(entity_seen(&cfg, "o/r", 9, true));
+        assert!(entity_seen(&cfg, "o/r", 9, false));
+    }
 }
