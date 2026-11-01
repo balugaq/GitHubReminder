@@ -68,6 +68,16 @@ pub struct Entity {
     pub pinned: bool,            // 用户显式钉住（默认 false，最多 3 个）
 }
 
+// 主窗口位置与尺寸（物理像素），移动/拉伸时记录，下次启动恢复
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WindowRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -101,6 +111,9 @@ pub struct Config {
     pub qq_app_secret: Option<String>,
     #[serde(default)]
     pub qq_openid: Option<String>,
+    // 主窗口上次的位置/尺寸；None = 从未记录过（走 tauri.conf 默认居中）
+    #[serde(default)]
+    pub window: Option<WindowRect>,
     pub watches: Vec<Watch>,
     // 游标：首次轮询只记游标不报事件
     pub cursor_issues: HashMap<String, String>,   // watch_id -> 最后一条 issue/PR created_at

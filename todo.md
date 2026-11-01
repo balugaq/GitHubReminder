@@ -1,6 +1,8 @@
 # TODO
 
 ## 已知待办
+- [x] **主窗口位置/尺寸记忆：拉伸/移动后下次启动恢复到上次位置**（完成 2026-11-01 @master工作区直改，待主人实测）
+  - 实现：Config 新增 `window` 字段（WindowRect，物理像素 x/y/width/height，serde default 向后兼容）；lib.rs 新增 remember_window——Moved/Resized 事件即更新内存并按 1s 节流落盘，点关闭隐藏前清零节流强制落一次最终位置；setup 启动时读到 window 就 set_size/set_position 恢复（物理像素，覆盖 tauri.conf 的 center）。嵌入模式不受影响：恢复发生在前端 invoke 嵌入之前，SetParent 不改位置。clippy -D warnings 零警告，7 个单测通过。
 - [x] **主界面动画只在动态真有变更时触发**（完成 2026-10-31 @master工作区直改，未提交待验收）
   - 根因：showView 每次重放 fade-up，而它被 syncFromRust 调用（窗口每次聚焦/配置变更都触发）→ 无变更也闪动画。修复：删掉 main.js showView 里的重放逻辑，动画只在视图首次显示和新事件卡插入时播。
 - [x] **评论通知反复提醒修复 + 评论提醒文案改"有新消息" + 同一 issue/PR 未读期间不重复提醒**（完成 2026-10-31 @master工作区直改——主人有未提交 WIP，worktree 基线落后故未走 worktree，改动未提交待主人验收）

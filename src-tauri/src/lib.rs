@@ -25,6 +25,8 @@ pub struct AppState {
     notified: Mutex<HashSet<String>>,
     // 内置 QQ 中转服务的运行句柄（自动配置开启且配置齐全时在跑）
     relay: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    // 上次窗口位置落盘时刻（毫秒），拖动/拉伸高频触发靠它节流
+    last_win_save: Mutex<u64>,
 }
 
 impl AppState {
@@ -441,6 +443,37 @@ fn toast_summary(events: &[github::Event]) -> String {
     }
 }
 
+// 记录主窗口位置/尺寸：内存即时更新，落盘按 1s 节流（拖动过程高频触发）；
+// 关闭隐藏前把节流计时清零再调一次，保证最终位置一定落盘
+fn remember_window(state: &AppState, window: &tauri::Window) {
+    let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+        return;
+    };
+    let rect = store::WindowRect {
+        x: pos.x as f64,
+        y: pos.y as f64,
+        width: size.width as f64,
+        height: size.height as f64,
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let due = {
+        let mut last = state.last_win_save.lock().unwrap();
+        let due = now.saturating_sub(*last) >= 1000;
+        if due {
+            *last = now;
+        }
+        due
+    };
+    let mut cfg = state.config.lock().unwrap();
+    cfg.window = Some(rect);
+    if due {
+        store::save(&state.path, &cfg);
+    }
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::{
         menu::{Menu, MenuItem},
@@ -767,9 +800,20 @@ fn sorted_entities(state: &AppState) -> Vec<Entity> {
     v
 }
 
+// Result 而非裸 Vec：失败要落到后端日志——前端 flash 报错而后台毫无痕迹时没法排查
 #[tauri::command]
-fn get_events(state: tauri::State<Arc<AppState>>) -> Vec<Entity> {
-    sorted_entities(&state)
+fn get_events(state: tauri::State<Arc<AppState>>) -> Result<Vec<Entity>, String> {
+    let mut v = match state.config.try_lock() {
+        Ok(cfg) => cfg.entities.clone(),
+        Err(e) => {
+            // 中毒/被持有都要在后端留下痕迹，前端只能拿到这串字符串
+            let msg = format!("实体列表不可读（锁状态: {e:?}）");
+            eprintln!("[events] get_events 失败: {msg}");
+            return Err(msg);
+        }
+    };
+    v.sort_by(|a, b| b.updated_at.cmp(&a.updated_at)); // 最近变更在上
+    Ok(v)
 }
 
 // 右键菜单改状态：按 repo+number 定位聚合实体（同一 issue/PR 只有一张卡）
@@ -917,12 +961,24 @@ pub fn run() {
             );
             let state = Arc::new(AppState {
                 path,
-                config: Mutex::new(cfg),
+                config: Mutex::new(cfg.clone()),
                 last_poll: Mutex::new(None),
                 polling: AtomicBool::new(false),
                 notified: Mutex::new(HashSet::new()),
                 relay: Mutex::new(None),
+                last_win_save: Mutex::new(0),
             });
+            // 恢复上次的位置/尺寸（物理像素，直接设回；覆盖 tauri.conf 的 center）
+            if let (Some(rect), Some(w)) = (cfg.window, app.get_webview_window("main")) {
+                let _ = w.set_size(tauri::PhysicalSize::new(
+                    rect.width.round() as u32,
+                    rect.height.round() as u32,
+                ));
+                let _ = w.set_position(tauri::PhysicalPosition::new(
+                    rect.x.round() as i32,
+                    rect.y.round() as i32,
+                ));
+            }
             // 自动配置开着且配置齐全的话，启动内置 QQ 中转服务
             restart_relay(&state);
             spawn_poller(app.handle().clone(), state.clone());
@@ -942,14 +998,28 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // 主窗口移动/拉伸即记录位置，下次启动恢复
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+                )
+            {
+                let state = window.app_handle().state::<Arc<AppState>>();
+                remember_window(&state, window);
+            }
             // 两个窗口点关闭都只隐藏：主窗口藏到托盘，管理窗口藏起来以便再次唤起
             if matches!(window.label(), "main" | "manage")
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
             {
-                api.prevent_close();
                 if window.label() == "main" {
+                    let state = window.app_handle().state::<Arc<AppState>>();
+                    // 清零节流计时，强制把最终位置落盘
+                    *state.last_win_save.lock().unwrap() = 0;
+                    remember_window(&state, window);
                     winembed::USER_HIDDEN.store(true, Ordering::Relaxed);
                 }
+                api.prevent_close();
                 let _ = window.hide();
             }
         })
@@ -990,11 +1060,11 @@ mod qq_tests {
     fn ev(kind: &str, num: Option<u64>, author: &str, assignees: &[&str]) -> github::Event {
         github::Event {
             kind: kind.into(),
-            repo: "ytdd9527/NetworksExpansion".into(),
+            repo: "microsoft/vscode".into(),
             number: num,
             title: "装配驱动器吞材料".into(),
             url: format!(
-                "https://github.com/ytdd9527/NetworksExpansion/{}",
+                "https://github.com/microsoft/vscode/{}",
                 num.map(|n| format!("issues/{n}")).unwrap_or_default()
             ),
             created_at: "2026-11-01T00:00:00+08:00".into(),
@@ -1005,18 +1075,18 @@ mod qq_tests {
 
     #[test]
     fn qq_summary_uses_owner_style_three_line_block() {
-        let events = vec![ev("issue", Some(461), "ytdd9527", &["ytdd9527"])];
-        let text = qq_summary(&events, Some("ytdd9527"));
+        let events = vec![ev("issue", Some(461), "microsoft", &["microsoft"])];
+        let text = qq_summary(&events, Some("microsoft"));
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "ytdd9527/NetworksExpansion #461");
-        assert_eq!(lines[1], "[@me] [ytdd9527] · 装配驱动器吞材料");
-        assert_eq!(lines[2], "https://github.com/ytdd9527/NetworksExpansion/issues/461");
+        assert_eq!(lines[0], "microsoft/vscode #461");
+        assert_eq!(lines[1], "[@me] [microsoft] · 装配驱动器吞材料");
+        assert_eq!(lines[2], "https://github.com/microsoft/vscode/issues/461");
     }
 
     #[test]
     fn qq_summary_hides_at_me_when_not_assignee() {
         let events = vec![ev("issue", Some(461), "someone", &["other"])];
-        let text = qq_summary(&events, Some("ytdd9527"));
+        let text = qq_summary(&events, Some("microsoft"));
         assert!(
             !text.contains("[@me]"),
             "不在 assignee 列表里就不该出现 @me：{text}"
@@ -1026,15 +1096,15 @@ mod qq_tests {
 
     #[test]
     fn qq_summary_no_at_me_when_username_not_configured() {
-        let events = vec![ev("issue", Some(461), "ytdd9527", &["ytdd9527"])];
+        let events = vec![ev("issue", Some(461), "microsoft", &["microsoft"])];
         let text = qq_summary(&events, None);
         assert!(!text.contains("[@me]"), "未填用户名时不应判断：{text}");
     }
 
     #[test]
     fn qq_summary_username_match_is_case_insensitive() {
-        let events = vec![ev("issue", Some(461), "x", &["YTDd9527"])];
-        let text = qq_summary(&events, Some("ytdd9527"));
+        let events = vec![ev("issue", Some(461), "x", &["microsoft"])];
+        let text = qq_summary(&events, Some("microsoft"));
         assert!(text.contains("[@me]"), "用户名比对应忽略大小写：{text}");
     }
 

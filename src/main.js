@@ -57,6 +57,13 @@ async function syncFromRust() {
   goDefaultView();
 }
 
+// 默认分类：有未读开未读，其次处理中，否则回全部；仅启动时定一次，之后不抢用户手上选的 tab
+function pickDefaultStatus() {
+  if (allEvents.some((e) => e.status === "unread")) activeStatus = "unread";
+  else if (allEvents.some((e) => e.status === "in_progress")) activeStatus = "in_progress";
+  else activeStatus = "all";
+}
+
 function goDefaultView() {
   if (config.watches && config.watches.length > 0) {
     updateStatusHint();
@@ -469,6 +476,7 @@ function applyWindowMode() {
   }
   // 重启后从后端拉持久化通知，读态不丢
   await loadEvents();
+  pickDefaultStatus();
   goDefaultView();
 
   // 首次启动引导改由主窗口引导页承担，不再自动弹出管理窗口
@@ -500,10 +508,9 @@ function applyWindowMode() {
 
   listen("ghr-events", (e) => addEvents(e.payload));
 
+  // 轮询失败不再占界面空间：后台每轮会照常打日志，这里只留 console 便于排查
   listen("ghr-poll-error", (e) => {
-    const el = document.getElementById("poll-error");
-    el.textContent = `⚠ 轮询失败：${e.payload}（检查网络/代理后等待下轮自动重试）`;
-    el.classList.remove("hidden");
+    console.warn("轮询失败（下轮自动重试）:", e.payload);
   });
 
   // 管理窗口改了配置（增删监听等），主窗口同步刷新
