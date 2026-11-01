@@ -41,6 +41,44 @@ struct Issue {
     assignees: Vec<GhUser>,
 }
 
+// 添加监听的浏览弹窗用：仓库下的 Issue/PR 列表项
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoItem {
+    pub number: u64,
+    pub title: String,
+    pub is_pr: bool,
+    pub state: String,
+    pub url: String,
+}
+
+// 列出仓库下的 Issue/PR 供添加监听时勾选（issues 端点天然包含 PR，按 pull_request 字段区分）
+pub async fn list_repo_items(cfg: &Config, repo: &str, item_state: &str) -> Result<Vec<RepoItem>, String> {
+    let client = client(cfg)?;
+    let url = format!(
+        "https://api.github.com/repos/{repo}/issues?state={item_state}&sort=updated&direction=desc&per_page=50"
+    );
+    let items: Vec<Issue> = client
+        .get(&url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("{e:?}"))?
+        .json()
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(items
+        .into_iter()
+        .map(|i| RepoItem {
+            is_pr: i.pull_request.is_some(),
+            state: if i.closed_at.is_some() { "closed".into() } else { "open".into() },
+            number: i.number,
+            title: i.title,
+            url: i.html_url,
+        })
+        .collect())
+}
+
 #[derive(Deserialize)]
 struct Release {
     id: u64,

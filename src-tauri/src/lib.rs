@@ -893,6 +893,22 @@ fn get_stats(
     state.config.lock().unwrap().stats.clone()
 }
 
+// 添加监听时的浏览弹窗：列出仓库下的 Issue/PR 供勾选（单条监听默认开评论+状态变更）
+#[tauri::command]
+async fn list_repo_items(
+    state: tauri::State<'_, Arc<AppState>>,
+    repo: String,
+    item_state: String,
+) -> Result<Vec<github::RepoItem>, String> {
+    let repo = repo.trim().to_string();
+    validate_repo(&repo)?;
+    if !matches!(item_state.as_str(), "open" | "closed") {
+        return Err(format!("未知状态筛选: {item_state}"));
+    }
+    let cfg = state.inner().config.lock().unwrap().clone();
+    github::list_repo_items(&cfg, &repo, &item_state).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1039,7 +1055,8 @@ pub fn run() {
             set_status,
             delete_event,
             set_pin,
-            get_stats
+            get_stats,
+            list_repo_items
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -368,6 +368,7 @@ function toggleAddForm(show) {
     document.getElementById("input-target").value = "";
     document.getElementById("add-error").classList.add("hidden");
     refreshAddOptions();
+    updateBrowseVisibility();
     document.getElementById("input-target").focus();
   }
 }
@@ -377,6 +378,146 @@ document.getElementById("btn-manage-add").addEventListener("click", () => {
   toggleAddForm(document.getElementById("add-form").classList.contains("hidden"));
 });
 document.getElementById("btn-add-cancel").addEventListener("click", () => toggleAddForm(false));
+
+// ---- 浏览选择弹窗：列出仓库 Issue/PR 勾选后批量挂单条监听 ----
+// 浏览入口只对仓库级目标开放（输入的是 Issue/PR 链接时无意义）
+function updateBrowseVisibility() {
+  const { number } = parseTarget(document.getElementById("input-target").value) || {};
+  document.getElementById("browse-row").classList.toggle("hidden", number != null);
+}
+document.getElementById("input-target").addEventListener("input", updateBrowseVisibility);
+
+let pickerRepo = null;
+let pickerState = "open";
+
+function togglePicker(show) {
+  document.getElementById("picker-overlay").classList.toggle("hidden", !show);
+  if (!show) pickerRepo = null;
+}
+
+function renderPickerItems(items, existingKeys) {
+  const list = document.getElementById("picker-list");
+  list.innerHTML = "";
+  document.getElementById("picker-status").textContent = `${items.length} 条`;
+  if (items.length === 0) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.style.padding = "16px 10px";
+    p.textContent = "该状态下没有 Issue / PR";
+    list.appendChild(p);
+    return;
+  }
+  for (const it of items) {
+    const row = document.createElement("div");
+    row.className = "picker-item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    // 已在监听列表里的默认勾上但置灰，重复添加后端会拒绝
+    const dup = existingKeys.has(`${it.number}`);
+    cb.checked = dup;
+    cb.disabled = dup;
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    const num = document.createElement("span");
+    num.className = "num";
+    num.textContent = `#${it.number}`;
+    const tag = document.createElement("span");
+    tag.className = "tag" + (it.isPr ? " is-pr" : "");
+    tag.textContent = it.isPr ? "PR" : "Issue";
+    const title = document.createElement("span");
+    title.className = "title";
+    title.textContent = it.title;
+    title.title = it.title;
+    row.append(cb, num, tag, title);
+    row.addEventListener("click", () => {
+      if (!cb.disabled) cb.checked = !cb.checked;
+    });
+    list.appendChild(row);
+  }
+}
+
+async function loadPicker() {
+  const status = document.getElementById("picker-status");
+  status.textContent = "加载中…";
+  const list = document.getElementById("picker-list");
+  list.innerHTML = "";
+  try {
+    const items = await invoke("list_repo_items", { repo: pickerRepo, itemState: pickerState });
+    const existing = new Set(
+      config.watches
+        .filter((w) => w.repo.toLowerCase() === pickerRepo.toLowerCase() && w.number != null)
+        .map((w) => `${w.number}`)
+    );
+    renderPickerItems(items, existing);
+  } catch (err) {
+    status.textContent = "加载失败";
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.style.padding = "16px 10px";
+    p.textContent = `拉取失败：${err}`;
+    list.appendChild(p);
+  }
+}
+
+document.getElementById("btn-browse").addEventListener("click", () => {
+  const parsed = parseTarget(document.getElementById("input-target").value);
+  if (!parsed || parsed.number != null) return;
+  pickerRepo = parsed.repo;
+  document.getElementById("picker-title").textContent = `选择要监听的 Issue / PR · ${parsed.repo}`;
+  togglePicker(true);
+  loadPicker();
+});
+
+for (const btn of document.querySelectorAll(".picker-state-btn")) {
+  btn.addEventListener("click", () => {
+    if (pickerState === btn.dataset.state) return;
+    pickerState = btn.dataset.state;
+    for (const b of document.querySelectorAll(".picker-state-btn")) {
+      b.classList.toggle("active", b === btn);
+    }
+    if (pickerRepo) loadPicker();
+  });
+}
+
+document.getElementById("btn-picker-close").addEventListener("click", () => togglePicker(false));
+document.getElementById("btn-picker-cancel").addEventListener("click", () => togglePicker(false));
+
+document.getElementById("btn-picker-confirm").addEventListener("click", async () => {
+  if (!pickerRepo) return;
+  const checked = [...document.querySelectorAll("#picker-list .picker-item")]
+    .map((row) => row.querySelector("input"))
+    .filter((cb) => cb.checked && !cb.disabled)
+    .map((cb) => parseInt(cb.closest(".picker-item").querySelector(".num").textContent.slice(1), 10));
+  if (checked.length === 0) {
+    togglePicker(false);
+    return;
+  }
+  let added = 0;
+  const errors = [];
+  for (const n of checked) {
+    try {
+      config = await invoke("add_watch", {
+        repo: pickerRepo,
+        number: n,
+        issues: false,
+        prs: false,
+        releases: false,
+        closedIssues: false,
+        closedPrs: false,
+        comments: true,
+        stateChange: true,
+      });
+      added++;
+    } catch (err) {
+      errors.push(`#${n}: ${err}`);
+    }
+  }
+  emit("ghr-config-changed").catch(() => {});
+  togglePicker(false);
+  render();
+  if (errors.length > 0) {
+    alert(`已添加 ${added} 条，以下失败：\n${errors.join("\n")}`);
+  }
+});
 
 document.getElementById("btn-add-confirm").addEventListener("click", async () => {
   const errEl = document.getElementById("add-error");

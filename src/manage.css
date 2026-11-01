@@ -309,3 +309,90 @@
 #group-nav::-webkit-scrollbar-thumb,
 #manage-list::-webkit-scrollbar-thumb,
 .tab-panel::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 3px; }
+
+/* ---- 浏览选择弹窗：列出仓库 Issue/PR 供勾选 ---- */
+#picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+#picker-panel {
+  width: 520px;
+  max-width: calc(100% - 40px);
+  max-height: 80%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+#picker-title { font-size: 14px; font-weight: 600; color: #e8eaf0; }
+.picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.picker-state-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--dim);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.picker-state-btn.active {
+  color: #e8eaf0;
+  border-color: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+#picker-list {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  color: #e8eaf0;
+  font-size: 13px;
+}
+.picker-item:last-child { border-bottom: none; }
+.picker-item:hover { background: var(--card-hover); }
+.picker-item .num { color: var(--dim); flex-shrink: 0; }
+.picker-item .tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--dim);
+}
+.picker-item .tag.is-pr { color: #9ecbff; }
+.picker-item .title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.picker-item input { flex-shrink: 0; }

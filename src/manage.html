@@ -31,6 +31,10 @@
             <label for="input-target">仓库（owner/name）或 Issue/PR 链接</label>
             <input id="input-target" type="text" placeholder="microsoft/vscode 或 github.com/.../issues/123" />
           </div>
+          <div class="form-row" id="browse-row">
+            <button id="btn-browse" class="sort-btn" type="button">📋 浏览该仓库的 Issue / PR 勾选添加</button>
+            <p class="hint">输入仓库后点这里，列出它的 Issue / PR，勾中即按单条监听（新评论 + 状态变更）加入。</p>
+          </div>
           <div class="form-row" id="repo-options">
             <label>监听内容（仓库级）</label>
             <div class="check-row">
@@ -182,6 +186,25 @@
           <input id="input-autostart" type="checkbox" />
         </div>
       </section>
+    </div>
+    <!-- 浏览选择弹窗：列出仓库下的 Issue/PR 供勾选，批量挂单条监听 -->
+    <div id="picker-overlay" class="hidden">
+      <div id="picker-panel">
+        <div class="picker-head">
+          <span id="picker-title">选择要监听的 Issue / PR</span>
+          <button id="btn-picker-close" class="sort-btn" title="关闭">×</button>
+        </div>
+        <div class="picker-toolbar">
+          <button class="picker-state-btn active" data-state="open">开启中</button>
+          <button class="picker-state-btn" data-state="closed">已关闭</button>
+          <span id="picker-status" class="hint"></span>
+        </div>
+        <div id="picker-list"></div>
+        <div class="btn-row">
+          <button id="btn-picker-confirm" class="btn-primary">添加勾选项</button>
+          <button id="btn-picker-cancel" class="btn-plain" style="margin-top: 0;">取消</button>
+        </div>
+      </div>
     </div>
     <script src="manage.js"></script>
   </body>
