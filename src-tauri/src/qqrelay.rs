@@ -127,32 +127,6 @@ fn split_text(text: &str) -> Vec<String> {
     parts
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn split_never_breaks_a_link() {
-        let link = format!("https://github.com/o/r/issues/{}", "9".repeat(120));
-        let block = format!("o/r #1 标题\n{link}");
-        let text = (0..40).map(|_| block.clone()).collect::<Vec<_>>().join("\n");
-
-        let parts = split_text(&text);
-        assert!(parts.len() > 1, "超过上限应分段");
-        for p in &parts {
-            assert!(
-                p.chars().count() <= MAX_LEN,
-                "分段长度不得超过上限: {}",
-                p.chars().count()
-            );
-            for line in p.split('\n').filter(|l| l.starts_with("https://")) {
-                assert_eq!(line, link, "链接必须完整落在同一段同一行");
-            }
-        }
-        // 段落拼回原文不应丢内容
-        assert_eq!(parts.join("\n"), text);
-    }
-}
 
 // 推送到 QQ 私信；返回成功发送的分段数
 pub async fn send_to_qq(cfg: &RelayCfg, text: &str) -> Result<usize, String> {
@@ -359,5 +333,32 @@ pub async fn run_server(cfg: Arc<RelayCfg>) {
             }
             Err(e) => println!("[qq] accept 失败: {e}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_never_breaks_a_link() {
+        let link = format!("https://github.com/o/r/issues/{}", "9".repeat(120));
+        let block = format!("o/r #1 标题\n{link}");
+        let text = (0..40).map(|_| block.clone()).collect::<Vec<_>>().join("\n");
+
+        let parts = split_text(&text);
+        assert!(parts.len() > 1, "超过上限应分段");
+        for p in &parts {
+            assert!(
+                p.chars().count() <= MAX_LEN,
+                "分段长度不得超过上限: {}",
+                p.chars().count()
+            );
+            for line in p.split('\n').filter(|l| l.starts_with("https://")) {
+                assert_eq!(line, link, "链接必须完整落在同一段同一行");
+            }
+        }
+        // 段落拼回原文不应丢内容
+        assert_eq!(parts.join("\n"), text);
     }
 }

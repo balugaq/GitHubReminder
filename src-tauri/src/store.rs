@@ -83,6 +83,9 @@ pub struct Config {
     // 轮询间隔秒数；None/0 视为默认 60，运行时夹到 [10, 3600]
     #[serde(default)]
     pub poll_interval: Option<u64>,
+    // 用户的 GitHub 用户名（自行填写）：用于判断 issue 的 assignee 里是否有本人
+    #[serde(default)]
+    pub github_username: Option<String>,
     // QQ 互联通知：内置中转服务（qqrelay.rs）推 QQ 私信，失败静默。
     // 全部无默认值，缺任一项则中转不启动、推送不发。
     #[serde(default)]
@@ -142,8 +145,24 @@ pub fn save(path: &PathBuf, cfg: &Config) {
     // token 不落盘（存 Windows 凭据管理器），剔除后再序列化
     let mut disk = cfg.clone();
     disk.token = None;
-    let json = serde_json::to_string_pretty(&disk).unwrap_or_default();
-    let _ = fs::write(path, json);
+    let json = match serde_json::to_string_pretty(&disk) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("[store] 配置序列化失败，跳过本次保存: {e}");
+            return;
+        }
+    };
+    // 原子写：先写临时文件再改名覆盖，避免进程被强杀时留下半截 JSON
+    // （半截 JSON 下次启动解析失败 → 整体回退默认值 → 通知全丢）
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = fs::write(&tmp, json) {
+        eprintln!("[store] 配置临时文件写入失败，保留原文件: {e}");
+        return;
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        eprintln!("[store] 配置改名失败，保留原文件: {e}");
+        let _ = fs::remove_file(&tmp);
+    }
 }
 
 const CRED_SERVICE: &str = "GitHubReminder";
@@ -163,5 +182,42 @@ pub fn save_token(token: Option<&str>) -> Result<(), String> {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.to_string()),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_overwrites_existing_file_on_windows() {
+        let dir = std::env::temp_dir().join(format!("ghr-store-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("config.json");
+
+        let mut cfg = Config::default();
+        cfg.watches.push(Watch {
+            id: "w1".into(),
+            repo: "o/r".into(),
+            ..Watch::default()
+        });
+        save(&path, &cfg);
+        assert!(path.exists(), "首次保存应生成文件");
+
+        // 二次保存必须能覆盖已存在文件（rename 覆盖语义），且不能留下半截内容
+        cfg.watches.push(Watch {
+            id: "w2".into(),
+            repo: "o/r2".into(),
+            ..Watch::default()
+        });
+        save(&path, &cfg);
+        let raw = fs::read_to_string(&path).expect("覆盖后应仍可读");
+        let back: Config = serde_json::from_str(&raw).expect("覆盖后内容应仍是合法 JSON");
+        assert_eq!(back.watches.len(), 2, "应读到两份监听");
+        assert!(
+            !dir.join("config.json.tmp").exists(),
+            "临时文件不应残留"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

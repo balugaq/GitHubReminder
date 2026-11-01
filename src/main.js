@@ -87,7 +87,7 @@ const LAST_EVENT_LABEL = { open: "新建/开启", comment: "新评论", state: "
 const STATE_LABEL = { open: "进行中", closed: "已关闭", published: "已发布" };
 const PAGE_SIZE = 50; // 每个分类默认最多 50 条，展开再加 50
 
-let activeStatus = "unread";
+let activeStatus = "all";
 let feedLimit = PAGE_SIZE;
 
 // 全量事件（含历史持久化），新事件追加，状态以后端为准
@@ -168,6 +168,7 @@ function renderTabs() {
   for (const ev of allEvents) {
     if (counts[ev.status] != null) counts[ev.status] += 1;
   }
+  counts.all = allEvents.length;
   for (const btn of document.querySelectorAll(".status-tab")) {
     const key = btn.dataset.status;
     btn.classList.toggle("active", key === activeStatus);
@@ -199,9 +200,16 @@ function renderFeed() {
     return;
   }
   // 后端已按 updatedAt 降序，这里只按分类过滤
-  const list = allEvents.filter((ev) => (ev.status || "unread") === activeStatus);
+  const list =
+    activeStatus === "all"
+      ? allEvents
+      : allEvents.filter((ev) => (ev.status || "unread") === activeStatus);
   if (list.length === 0) {
-    showHint("该分类下还没有通知");
+    showHint(
+      activeStatus === "all"
+        ? "暂无新事件。轮询每 " + (config.pollInterval || 60) + " 秒一次，有新动态会自动浮现。"
+        : "该分类下还没有通知"
+    );
     return;
   }
   const shown = list.slice(0, feedLimit);
@@ -353,7 +361,9 @@ async function loadEvents() {
   try {
     allEvents = await invoke("get_events");
   } catch (err) {
-    console.warn("读取历史通知失败:", err);
+    // 静默置空会让"取不到数据"看起来像"没有通知"，必须让用户看见错误
+    console.error("读取历史通知失败:", err);
+    flash(`读取通知失败：${err}`);
     allEvents = [];
   }
   renderFeed();
@@ -364,7 +374,8 @@ async function addEvents() {
   try {
     allEvents = await invoke("get_events");
   } catch (err) {
-    console.warn("拉取通知失败:", err);
+    console.error("拉取通知失败:", err);
+    flash(`拉取通知失败：${err}`);
     return;
   }
   renderFeed();

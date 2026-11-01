@@ -11,6 +11,17 @@ pub struct Event {
     pub title: String,
     pub url: String,
     pub created_at: String,
+    // 提 issue / pr 的人，用于 QQ 文案里的 [用户名] 标记
+    pub author: String,
+    // assignee 列表，用于判断「是否有我」
+    pub assignees: Vec<String>,
+}
+
+// GitHub API 里 user / assignee 的最小结构
+#[derive(Deserialize, Clone, Debug, Default)]
+struct GhUser {
+    #[serde(default)]
+    login: String,
 }
 
 #[derive(Deserialize)]
@@ -22,6 +33,12 @@ struct Issue {
     // 关闭事件轮询用：closed_at 是关闭时刻，评论等 updated_at 变化不会误触发
     closed_at: Option<String>,
     pull_request: Option<serde_json::Value>,
+    // 提 issue 的人（PR 场景下即提 pr 的人）
+    #[serde(default)]
+    user: GhUser,
+    // assignee 列表，用于判断「是否有我」
+    #[serde(default)]
+    assignees: Vec<GhUser>,
 }
 
 #[derive(Deserialize)]
@@ -31,6 +48,9 @@ struct Release {
     tag_name: String,
     html_url: String,
     published_at: Option<String>,
+    // 发布者（release 没有 assignee）
+    #[serde(default)]
+    author: GhUser,
 }
 
 fn client(cfg: &Config) -> Result<reqwest::Client, String> {    let mut b = reqwest::Client::builder()
@@ -189,6 +209,10 @@ struct IssueDetail {
     state: String,
     title: String,
     html_url: String,
+    #[serde(default)]
+    user: GhUser,
+    #[serde(default)]
+    assignees: Vec<GhUser>,
 }
 
 fn first_line(text: &Option<String>, max: usize) -> String {
@@ -213,17 +237,25 @@ async fn poll_item(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> Res
     let n = w.number.ok_or("item 监听缺少 number")?;
     let mut events = Vec::new();
 
-    if w.state_change {
+    // issue 详情带 author/assignees，state 与 comment 两条分支都要用，先抓一次
+    let mut detail: Option<IssueDetail> = None;
+    if w.state_change || w.comments {
         let url = format!("https://api.github.com/repos/{}/issues/{}", w.repo, n);
-        let issue: IssueDetail = client
-            .get(&url)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-            .map_err(|e| format!("{e:?}"))?
-            .json()
-            .await
-            .map_err(|e| format!("{e:?}"))?;
+        detail = Some(
+            client
+                .get(&url)
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| format!("{e:?}"))?
+                .json()
+                .await
+                .map_err(|e| format!("{e:?}"))?,
+        );
+    }
+
+    if w.state_change {
+        let issue = detail.as_ref().expect("state_change 时已抓取 issue 详情");
         match cfg.cursor_state.get(&w.id) {
             None => {
                 cfg.cursor_state.insert(w.id.clone(), issue.state.clone());
@@ -236,6 +268,12 @@ async fn poll_item(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> Res
                     title: format!("「{}」状态 {} → {}", issue.title, s, issue.state),
                     url: issue.html_url.clone(),
                     created_at: chrono::Local::now().to_rfc3339(),
+                    author: issue.user.login.clone(),
+                    assignees: issue
+                        .assignees
+                        .iter()
+                        .map(|a| a.login.clone())
+                        .collect(),
                 });
                 cfg.cursor_state.insert(w.id.clone(), issue.state.clone());
             }
@@ -265,6 +303,14 @@ async fn poll_item(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> Res
             .filter(|c| cursor.is_some_and(|last| c.id > last))
             .collect();
         new_comments.sort_by_key(|c| c.id);
+        // 评论的「[用户名]」与 assignee 都取所属 issue：前者是提 issue/pr 的人，后者是 issue 的 assignee
+        let (author, assignees) = match detail.as_ref() {
+            Some(d) => (
+                d.user.login.clone(),
+                d.assignees.iter().map(|a| a.login.clone()).collect(),
+            ),
+            None => (String::new(), Vec::new()),
+        };
         for c in new_comments {
             events.push(Event {
                 kind: "comment".into(),
@@ -273,6 +319,8 @@ async fn poll_item(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> Res
                 title: first_line(&c.body, 60),
                 url: c.html_url.clone(),
                 created_at: c.created_at.clone(),
+                author: author.clone(),
+                assignees: assignees.clone(),
             });
         }
         if let Some(max_id) = comments.iter().map(|c| c.id).max() {
@@ -324,6 +372,8 @@ async fn poll_issues(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> R
             title: i.title,
             url: i.html_url,
             created_at: i.created_at,
+            author: i.user.login.clone(),
+            assignees: i.assignees.iter().map(|a| a.login.clone()).collect(),
         });
     }
     // 首次只记游标，避免把存量 issue 全报出来
@@ -380,6 +430,8 @@ async fn poll_closed(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> R
             title: i.title,
             url: i.html_url,
             created_at: closed_at,
+            author: i.user.login.clone(),
+            assignees: i.assignees.iter().map(|a| a.login.clone()).collect(),
         });
     }
     // 首次只记游标，避免把存量已关闭的 issue 全报出来
@@ -446,6 +498,8 @@ pub async fn backfill_open_14d(cfg: &Config) -> Result<Vec<Event>, String> {
                 title: i.title,
                 url: i.html_url,
                 created_at: i.created_at,
+                author: i.user.login.clone(),
+                assignees: i.assignees.iter().map(|a| a.login.clone()).collect(),
             });
             n += 1;
         }
@@ -485,5 +539,7 @@ async fn poll_release(client: &reqwest::Client, w: &Watch, cfg: &mut Config) -> 
         title: rel.name.unwrap_or(rel.tag_name),
         url: rel.html_url,
         created_at: rel.published_at.unwrap_or_default(),
+        author: rel.author.login.clone(),
+        assignees: Vec::new(),
     }))
 }

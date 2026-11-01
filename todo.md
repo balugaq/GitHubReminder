@@ -41,6 +41,29 @@
   - clippy -D warnings 零警告。视觉待主人目视确认。
   - 修正（同日二轮）：① Watch 序列化是 camelCase，JS 误读 snake_case 的 closed_issues/closed_prs/state_change 恒 undefined → 编辑表单勾选不回显、列表徽标不出现（老 3 项 issues/prs/releases 碰巧两写法同名才正常）；已统一改读 closedIssues/closedPrs/stateChange。② 「全部」「单条监听」导航行漏绑 click 无响应；已把点击处理收敛进 mkNavRow。
 - [ ] **任务栏图标仍是旧图标**（软件图标已换，任务栏缓存/未跟随新图标，需排查修复——常见原因：Windows 图标缓存、未设置所有窗口尺寸的图标资源、tauri.conf icons 配置不全）。
+- [x] **N1 通知重启后"消失"根因定位与修复**（完成 2026-11-01 @master工作区直改）
+  - 现象：关闭 app 重开，主界面 4 个分类全空，看不到任何通知；托盘退出同样如此。
+  - **根因（已用双向探针实测确认，非猜测）**：数据从未丢失——落盘 config.json 有 2 条合法实体、后端 `[init] 通知实体: 2 条`、后端 `get_events` 探针打印「正常返回 2 条」、前端探针打印「拿到 2 条」。断点在 **前端 `invoke` 调用这一跳**：故障态下 `invoke("get_events")` 抛错被 `loadEvents` 的 `catch` 吞掉（`allEvents = []`），界面因此显示为空，误判为"没有数据"。
+  - **放大器**：默认 tab 恒为 `unread`，而这批实体状态是 `read`/`in_progress`（主人右键设过），即使 invoke 成功也落在非默认分类——这是"看起来全空"的第二层原因。
+  - 已修：① `loadEvents`/`addEvents` 的 catch 改为 `console.error` + 界面 flash 提示，不再静默置空；② 新增「全部」tab 并作默认视图，四个状态分类保留；③ `store::save` 改原子写（写 config.json.tmp 再 rename 覆盖），杜绝强杀进程留下半截 JSON 导致下次启动整体清空。
+  - 验收：新增单元测试 `save_overwrites_existing_file_on_windows`（覆盖已有文件 + 无 tmp 残留 + JSON 仍合法）通过；cargo clippy --all-targets -D warnings 零警告；node --check 通过。
+  - 结论：**关 cmd 窗口/托盘退出不会导致保存失败**——数据在每次轮询后就落盘，不依赖退出流程。真正的风险是"写到一半被杀"，已由原子写消除。
+- [x] **N2 QQ 推送文案改为主人指定格式 + 新增用户名设置**（完成 2026-11-01 @master工作区直改，依赖 N1）
+  - 目标格式（每条事件一块，不折叠、全部发出，可分多次发）：
+    ```
+    [GitHubReminder]
+    owner/repo #461
+    [@me] [username] · 标题
+    https://github.com/owner/repo/issues/461
+    ```
+  - `[Issuer]`/`[PRER]` 按主人确认**换成实际用户名**（提 issue / pr 的人）；行首 `[@me]` 改用短标记 **@me**，且**仅当 assignee 里有本人时**显示。
+  - 「是否本人」判定：设置里新增 **GitHub 用户名** 输入项，由用户自行填写；拉取时需带出 issue/PR 的 `user.login` 与 `assignees[].login`（github.rs 的 Issue 结构体当前**没有**这两个字段，需补）。
+  - 折叠策略调整：去掉「最多 8 条 + 折叠」，改为**全部条目都发**，超长按 qqrelay 的 1900 字上限分段（split_text 已按行切，链接不会被截断）。
+  - 已实现：github.rs 的 Event 补 `author`/`assignees` 字段（Issue/IssueDetail/Release 均补 GhUser，poll_item 提前抓一次 issue 详情供 state/comment 共用，comment 的 author/assignees 取所属 issue）；store.rs 的 Config 补 `github_username`；lib.rs 新增 `set_github_username` 命令并重写 `qq_summary`；manage.html/manage.js 加用户名输入项。
+  - 验收：新增 5 个 QQ 文案单元测试（三行格式逐字断言、@me 条件、用户名大小写、12 条不折叠）全通过；cargo clippy -D warnings 零警告；node --check 通过。
+  - 待主人实测：填好用户名后，QQ 推送应形如「[@me] [ytdd9527] · 标题」；系统 Toast 文案未改（仍为精简式），如需同步可再提。
+
+
 - [ ] **QQ 推送文案改为多行卡片式**（参照主人 2026-11-01 提供截图的下面那种样式）：
   ```
   [GitHubReminder] 通知 · GitHub 动态

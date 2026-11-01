@@ -425,6 +425,7 @@ function updateTokenState() {
   document.getElementById("input-proxy").value = config.proxy || "";
   document.getElementById("input-notify").checked = config.notify !== false;
   document.getElementById("input-poll-interval").value = config.pollInterval || 60;
+  document.getElementById("input-github-username").value = config.githubUsername || "";
   document.getElementById("input-qq-notify").checked = config.qqNotify === true;
   document.getElementById("input-qq-port").value = config.qqRelayPort || "";
   document.getElementById("input-qq-appid").value = config.qqAppId || "";
@@ -472,6 +473,14 @@ document.getElementById("input-poll-interval").addEventListener("change", async 
   }
   config = await invoke("set_poll_interval", { secs: v });
   e.target.value = config.pollInterval || 60;
+});
+
+// GitHub 用户名：用于判断 assignee 里是否有本人（空 = 不判断）
+document.getElementById("input-github-username").addEventListener("change", async (e) => {
+  config = await invoke("set_github_username", {
+    username: e.target.value.trim() || null,
+  });
+  e.target.value = config.githubUsername || "";
 });
 
 document.getElementById("input-qq-notify").addEventListener("change", async (e) => {

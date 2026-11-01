@@ -252,6 +252,14 @@ fn set_poll_interval(state: tauri::State<Arc<AppState>>, secs: Option<u64>) -> C
     state.config.lock().unwrap().clone()
 }
 
+// 用户的 GitHub 用户名：用于判断 issue 的 assignee 里是否有本人
+#[tauri::command]
+fn set_github_username(state: tauri::State<Arc<AppState>>, username: Option<String>) -> Config {
+    let u = username.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    state.with_config(|cfg| cfg.github_username = u);
+    state.config.lock().unwrap().clone()
+}
+
 #[tauri::command]
 fn set_qq_notify(state: tauri::State<Arc<AppState>>, notify: bool) -> Config {
     state.with_config(|cfg| cfg.qq_notify = notify);
@@ -314,30 +322,47 @@ fn restart_relay(state: &AppState) {
     *state.relay.lock().unwrap() = Some(handle);
 }
 
-// QQ 推送正文逐条列，每条紧跟其 GitHub 链接；条数上限防单次刷屏
-const MAX_QQ_ITEMS: usize = 8;
-
-fn qq_summary(events: &[github::Event]) -> String {
+// QQ 推送正文：每条事件一块，标题式三行；全部发出不折叠，
+// 超长交给 qqrelay::split_text 按行分段（1900 字上限，链接不会被截断）
+// 格式：
+//   owner/repo #123456
+//   [@me] [issuer] · issue title
+//   https://github.com/owner/repo/issues/123456
+//
+// [@me] 仅当该事件的 assignee 列表里有本人（设置里填的 GitHub 用户名）时出现；
+// [用户名] 是提 issue / pr 的人。
+fn qq_summary(events: &[github::Event], my_username: Option<&str>) -> String {
+    let me = my_username.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
     let mut lines: Vec<String> = Vec::new();
-    for ev in events.iter().take(MAX_QQ_ITEMS) {
-        // 与 toast 口径一致：评论不展开内容，链接指向具体评论
+    for ev in events {
+        let head = format!(
+            "{}{}",
+            ev.repo,
+            ev.number.map(|n| format!(" #{n}")).unwrap_or_default()
+        );
+        // 提 issue/pr 的人就是 API 返回的 author；release 则是发布者
+        let at_me = match &me {
+            Some(m) => ev
+                .assignees
+                .iter()
+                .any(|a| a.trim().to_lowercase() == *m),
+            None => false,
+        };
+        let mut marks = String::new();
+        if at_me {
+            marks.push_str("[@me] ");
+        }
+        if !ev.author.is_empty() {
+            marks.push_str(&format!("[{}] ", ev.author));
+        }
         let title = if ev.kind == "comment" {
             "有新消息".to_string()
         } else {
             ev.title.clone()
         };
-        lines.push(format!(
-            "{}{} {}",
-            ev.repo,
-            ev.number.map(|n| format!(" #{n}")).unwrap_or_default(),
-            title
-        ));
-        if !ev.url.is_empty() {
-            lines.push(ev.url.clone());
-        }
-    }
-    if events.len() > MAX_QQ_ITEMS {
-        lines.push(format!("…以及另外 {} 条新动态", events.len() - MAX_QQ_ITEMS));
+        lines.push(head);
+        lines.push(format!("{marks}· {title}"));
+        lines.push(ev.url.clone());
     }
     lines.join("\n")
 }
@@ -348,7 +373,10 @@ fn spawn_qq_push(cfg: &Config, events: &[github::Event]) {
     if !cfg.qq_notify || events.is_empty() {
         return;
     }
-    let text = format!("[GitHubReminder]\n{}", qq_summary(events));
+    let text = format!(
+        "[GitHubReminder]\n{}",
+        qq_summary(events, cfg.github_username.as_deref())
+    );
     if cfg.qq_autoconfig {
         let Some(rc) = relay_cfg_of(cfg) else {
             println!("[qq] 自动配置开但端口/凭证未配全，跳过 QQ 推送");
@@ -933,6 +961,7 @@ pub fn run() {
             set_notify,
             backfill_14d,
             set_poll_interval,
+            set_github_username,
             set_qq_notify,
             set_qq_settings,
             set_qq_autoconfig,
@@ -952,4 +981,78 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod qq_tests {
+    use super::*;
+
+    fn ev(kind: &str, num: Option<u64>, author: &str, assignees: &[&str]) -> github::Event {
+        github::Event {
+            kind: kind.into(),
+            repo: "ytdd9527/NetworksExpansion".into(),
+            number: num,
+            title: "装配驱动器吞材料".into(),
+            url: format!(
+                "https://github.com/ytdd9527/NetworksExpansion/{}",
+                num.map(|n| format!("issues/{n}")).unwrap_or_default()
+            ),
+            created_at: "2026-11-01T00:00:00+08:00".into(),
+            author: author.into(),
+            assignees: assignees.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn qq_summary_uses_owner_style_three_line_block() {
+        let events = vec![ev("issue", Some(461), "ytdd9527", &["ytdd9527"])];
+        let text = qq_summary(&events, Some("ytdd9527"));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "ytdd9527/NetworksExpansion #461");
+        assert_eq!(lines[1], "[@me] [ytdd9527] · 装配驱动器吞材料");
+        assert_eq!(lines[2], "https://github.com/ytdd9527/NetworksExpansion/issues/461");
+    }
+
+    #[test]
+    fn qq_summary_hides_at_me_when_not_assignee() {
+        let events = vec![ev("issue", Some(461), "someone", &["other"])];
+        let text = qq_summary(&events, Some("ytdd9527"));
+        assert!(
+            !text.contains("[@me]"),
+            "不在 assignee 列表里就不该出现 @me：{text}"
+        );
+        assert!(text.contains("[someone]"), "应显示提 issue 的人：{text}");
+    }
+
+    #[test]
+    fn qq_summary_no_at_me_when_username_not_configured() {
+        let events = vec![ev("issue", Some(461), "ytdd9527", &["ytdd9527"])];
+        let text = qq_summary(&events, None);
+        assert!(!text.contains("[@me]"), "未填用户名时不应判断：{text}");
+    }
+
+    #[test]
+    fn qq_summary_username_match_is_case_insensitive() {
+        let events = vec![ev("issue", Some(461), "x", &["YTDd9527"])];
+        let text = qq_summary(&events, Some("ytdd9527"));
+        assert!(text.contains("[@me]"), "用户名比对应忽略大小写：{text}");
+    }
+
+    #[test]
+    fn qq_summary_emits_all_events_without_folding() {
+        let events: Vec<github::Event> = (1..=12)
+            .map(|n| ev("issue", Some(n), "a", &[]))
+            .collect();
+        let text = qq_summary(&events, None);
+        for n in 1..=12 {
+            assert!(
+                text.contains(&format!("#{n}")),
+                "第 {n} 条不应被折叠掉"
+            );
+        }
+        assert!(
+            !text.contains("以及另外"),
+            "不应再有折叠提示：{text}"
+        );
+    }
 }
