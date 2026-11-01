@@ -324,46 +324,38 @@ fn restart_relay(state: &AppState) {
     *state.relay.lock().unwrap() = Some(handle);
 }
 
-// QQ 推送正文：每条事件一块，标题式三行；全部发出不折叠，
+// QQ 推送正文：每条事件一块三行卡片；全部发出不折叠，
 // 超长交给 qqrelay::split_text 按行分段（1900 字上限，链接不会被截断）
-// 格式：
-//   owner/repo #123456
-//   [@me] [issuer] · issue title
-//   https://github.com/owner/repo/issues/123456
-//
-// [@me] 仅当该事件的 assignee 列表里有本人（设置里填的 GitHub 用户名）时出现；
-// [用户名] 是提 issue / pr 的人。
-fn qq_summary(events: &[github::Event], my_username: Option<&str>) -> String {
-    let me = my_username.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
+// 格式（头部一行由 spawn_qq_push 拼上）：
+//   [GitHubReminder] 通知 · GitHub 动态
+//   PR #459 · owner/repo
+//   标题（评论统一显示「有新消息」）
+//   https://github.com/owner/repo/pull/459
+fn event_kind_label(ev: &github::Event) -> &'static str {
+    match ev.kind.as_str() {
+        "release" => "Release",
+        "pr" | "closed_pr" => "PR",
+        "issue" | "closed_issue" => "Issue",
+        // comment/state 按 URL 区分挂在 Issue 还是 PR 上
+        _ if ev.url.contains("/pull/") => "PR",
+        _ => "Issue",
+    }
+}
+
+fn qq_summary(events: &[github::Event]) -> String {
     let mut lines: Vec<String> = Vec::new();
     for ev in events {
-        let head = format!(
-            "{}{}",
-            ev.repo,
-            ev.number.map(|n| format!(" #{n}")).unwrap_or_default()
-        );
-        // 提 issue/pr 的人就是 API 返回的 author；release 则是发布者
-        let at_me = match &me {
-            Some(m) => ev
-                .assignees
-                .iter()
-                .any(|a| a.trim().to_lowercase() == *m),
-            None => false,
+        let head = match ev.number {
+            Some(n) => format!("{} #{n} · {}", event_kind_label(ev), ev.repo),
+            None => format!("{} · {}", event_kind_label(ev), ev.repo),
         };
-        let mut marks = String::new();
-        if at_me {
-            marks.push_str("[@me] ");
-        }
-        if !ev.author.is_empty() {
-            marks.push_str(&format!("[{}] ", ev.author));
-        }
         let title = if ev.kind == "comment" {
             "有新消息".to_string()
         } else {
             ev.title.clone()
         };
         lines.push(head);
-        lines.push(format!("{marks}· {title}"));
+        lines.push(title);
         lines.push(ev.url.clone());
     }
     lines.join("\n")
@@ -376,8 +368,8 @@ fn spawn_qq_push(cfg: &Config, events: &[github::Event]) {
         return;
     }
     let text = format!(
-        "[GitHubReminder]\n{}",
-        qq_summary(events, cfg.github_username.as_deref())
+        "[GitHubReminder] 通知 · GitHub 动态\n{}",
+        qq_summary(events)
     );
     if cfg.qq_autoconfig {
         let Some(rc) = relay_cfg_of(cfg) else {
@@ -1057,66 +1049,56 @@ pub fn run() {
 mod qq_tests {
     use super::*;
 
-    fn ev(kind: &str, num: Option<u64>, author: &str, assignees: &[&str]) -> github::Event {
+    fn ev(kind: &str, num: Option<u64>, path: &str) -> github::Event {
         github::Event {
             kind: kind.into(),
-            repo: "microsoft/vscode".into(),
+            repo: "ytd9527/NetworksExpansion".into(),
             number: num,
-            title: "装配驱动器吞材料".into(),
-            url: format!(
-                "https://github.com/microsoft/vscode/{}",
-                num.map(|n| format!("issues/{n}")).unwrap_or_default()
-            ),
+            title: "fix: 修改元件转运台逻辑".into(),
+            url: format!("https://github.com/ytd9527/NetworksExpansion/{path}"),
             created_at: "2026-11-01T00:00:00+08:00".into(),
-            author: author.into(),
-            assignees: assignees.iter().map(|s| s.to_string()).collect(),
+            author: "ytd9527".into(),
+            assignees: vec!["ytd9527".into()],
         }
     }
 
     #[test]
-    fn qq_summary_uses_owner_style_three_line_block() {
-        let events = vec![ev("issue", Some(461), "microsoft", &["microsoft"])];
-        let text = qq_summary(&events, Some("microsoft"));
+    fn qq_summary_uses_card_style_four_line_block() {
+        let events = vec![ev("pr", Some(459), "pull/459")];
+        let text = format!("[GitHubReminder] 通知 · GitHub 动态\n{}", qq_summary(&events));
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "microsoft/vscode #461");
-        assert_eq!(lines[1], "[@me] [microsoft] · 装配驱动器吞材料");
-        assert_eq!(lines[2], "https://github.com/microsoft/vscode/issues/461");
+        assert_eq!(lines[0], "[GitHubReminder] 通知 · GitHub 动态");
+        assert_eq!(lines[1], "PR #459 · ytd9527/NetworksExpansion");
+        assert_eq!(lines[2], "fix: 修改元件转运台逻辑");
+        assert_eq!(lines[3], "https://github.com/ytd9527/NetworksExpansion/pull/459");
     }
 
     #[test]
-    fn qq_summary_hides_at_me_when_not_assignee() {
-        let events = vec![ev("issue", Some(461), "someone", &["other"])];
-        let text = qq_summary(&events, Some("microsoft"));
-        assert!(
-            !text.contains("[@me]"),
-            "不在 assignee 列表里就不该出现 @me：{text}"
-        );
-        assert!(text.contains("[someone]"), "应显示提 issue 的人：{text}");
+    fn qq_summary_comment_shows_generic_message() {
+        let events = vec![ev("comment", Some(461), "issues/461")];
+        let text = qq_summary(&events);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "Issue #461 · ytd9527/NetworksExpansion");
+        assert_eq!(lines[1], "有新消息");
     }
 
     #[test]
-    fn qq_summary_no_at_me_when_username_not_configured() {
-        let events = vec![ev("issue", Some(461), "microsoft", &["microsoft"])];
-        let text = qq_summary(&events, None);
-        assert!(!text.contains("[@me]"), "未填用户名时不应判断：{text}");
-    }
-
-    #[test]
-    fn qq_summary_username_match_is_case_insensitive() {
-        let events = vec![ev("issue", Some(461), "x", &["microsoft"])];
-        let text = qq_summary(&events, Some("microsoft"));
-        assert!(text.contains("[@me]"), "用户名比对应忽略大小写：{text}");
+    fn qq_summary_release_has_no_number() {
+        let mut rel = ev("release", None, "releases/tag/v1");
+        rel.title = "v1.0".into();
+        let text = qq_summary(&[rel]);
+        assert!(text.starts_with("Release · ytd9527/NetworksExpansion\nv1.0\n"));
     }
 
     #[test]
     fn qq_summary_emits_all_events_without_folding() {
         let events: Vec<github::Event> = (1..=12)
-            .map(|n| ev("issue", Some(n), "a", &[]))
+            .map(|n| ev("issue", Some(n), &format!("issues/{n}")))
             .collect();
-        let text = qq_summary(&events, None);
+        let text = qq_summary(&events);
         for n in 1..=12 {
             assert!(
-                text.contains(&format!("#{n}")),
+                text.contains(&format!("Issue #{n} · ")),
                 "第 {n} 条不应被折叠掉"
             );
         }
