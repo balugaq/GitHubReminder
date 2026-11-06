@@ -868,16 +868,19 @@ async fn do_poll_inner(app: &tauri::AppHandle, state: &AppState) -> u64 {
     now
 }
 
-// 免疫 Win+D 的兜底：主防线是 winembed::embed 把窗口挂到 SHELLDLL_DefView 的宿主
-// （Shell 的「显示桌面」跳过那一层）。这里 200ms 体检一次，偶发被藏时肉眼无感地唤回；
-// 主人主动隐藏时 USER_HIDDEN 会让守护放手，不会和托盘开关抢窗口。
+// 免疫 Win+D 的兜底：窗口被桌面层连带藏掉时 200ms 内唤回；主人主动隐藏时放手。
+// 唤回无效就指数退避到 2s，避免和 Shell 反复拉锯——高频 ShowWindow/SetWindowPos
+// 会打断鼠标按下与抬起的配对，表现为窗口看得见却点不了、拖不动。
 fn spawn_visibility_guard(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
+        let mut delay = 200u64;
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            if let Some(w) = app.get_webview_window("main") {
-                winembed::restore_if_hidden_by_win_d(&w);
-            }
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            let healthy = match app.get_webview_window("main") {
+                Some(w) => winembed::restore_if_hidden_by_win_d(&w),
+                None => true,
+            };
+            delay = if healthy { 200 } else { (delay * 2).min(2000) };
         }
     });
 }

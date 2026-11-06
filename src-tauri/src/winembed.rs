@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetCapture, VK_LBUTTON};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowExW, FindWindowW, GetClassNameW, GetWindowLongPtrW, IsIconic, IsWindow,
     IsWindowVisible, SendMessageW, SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow,
@@ -10,11 +11,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW,
 };
 
-// 壁纸层 WorkerW 的句柄（旧嵌入方式 / 回退用），枚举回调里写，枚举结束后读
+// 壁纸层 WorkerW 的句柄（默认嵌入宿主），枚举回调里写，枚举结束后读
 static WORKERW: Mutex<Option<isize>> = Mutex::new(None);
 static DEFVIEW_FOUND: AtomicBool = AtomicBool::new(false);
-// 桌面图标层 SHELLDLL_DefView 的直接宿主：Progman 或挂着 DefView 的那个 WorkerW。
-// Win+D /「显示桌面」会跳过这一层，挂到它下面才能像 Win7 小组件一样一直留在桌面上。
+// 桌面图标层 SHELLDLL_DefView 的直接宿主（Progman 或挂 DefView 的 WorkerW），仅实验用。
+// Shell 的 Win+D 会跳过它，但桌面窗口过程会吞掉子窗口的鼠标消息，窗口可见却无法交互。
 static DESKTOP_HOST: Mutex<Option<isize>> = Mutex::new(None);
 // 本次实际 SetParent 的父句柄，守护协程据此判断父链是否被 Explorer 重建
 static EMBED_PARENT: Mutex<Option<isize>> = Mutex::new(None);
@@ -67,7 +68,7 @@ fn find_workerw() -> Option<HWND> {
 }
 
 // 枚举顶层窗口，找「直接挂着 SHELLDLL_DefView」的那一个（Progman 或 WorkerW）。
-// 不用 0x052C 分裂出的壁纸层：那层在 Win+D 时会跟桌面一起被隐藏，窗口作为子窗口跟着消失。
+// 这层只在 GHR_DESKTOP_HOST 实验开关下使用；默认壁纸层由守护协程在 Win+D 后唤回。
 extern "system" fn enum_desktop_host_proc(hwnd: HWND, _lparam: LPARAM) -> BOOL {
     if let Ok(defview) = unsafe { FindWindowExW(Some(hwnd), None, w!("SHELLDLL_DefView"), None) }
         && !defview.0.is_null()
@@ -90,9 +91,40 @@ fn embed_parent() -> Option<HWND> {
     v.map(|p| HWND(p as *mut _))
 }
 
-// 桌面图标层宿主优先；找不到（极少数 Shell 布局异常）才退回壁纸层
-fn choose_host(desktop: Option<HWND>, workerw: Option<HWND>) -> Option<HWND> {
-    desktop.or(workerw)
+// 默认挂壁纸层 WorkerW：桌面图标层的宿主（Progman）是 Shell 的桌面窗口，
+// 它的窗口过程会吞掉子窗口的鼠标激活消息，窗口看得见却完全无法交互。
+// GHR_DESKTOP_HOST 才启用图标层宿主做严格 Win+D 免疫实验；GHR_WALLPAPER_LAYER 可强制回退。
+fn prefer_desktop_host() -> bool {
+    std::env::var("GHR_DESKTOP_HOST").is_ok() && std::env::var("GHR_WALLPAPER_LAYER").is_err()
+}
+
+fn choose_host(
+    desktop: Option<HWND>,
+    workerw: Option<HWND>,
+    prefer_desktop: bool,
+) -> Option<HWND> {
+    if prefer_desktop {
+        desktop.or(workerw)
+    } else {
+        workerw.or(desktop)
+    }
+}
+
+fn find_host() -> Option<HWND> {
+    let prefer = prefer_desktop_host();
+    let desktop = if prefer { find_desktop_host() } else { None };
+    // 首选已命中就别再发 0x052C 动 Explorer
+    let workerw = if desktop.is_some() {
+        None
+    } else {
+        find_workerw()
+    };
+    choose_host(desktop, workerw, prefer)
+}
+
+// 鼠标按下期间绝不唤回：SetWindowPos 会打断按下/抬起配对，让点击和拖拽全部失效
+fn mouse_busy() -> bool {
+    unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 || !GetCapture().0.is_null() }
 }
 
 // 复用的展示动作：子窗口没有 minimized/maximized 概念，SW_RESTORE 对它无效，
@@ -114,26 +146,22 @@ unsafe fn bring_to_front(hwnd: HWND) {
 
 fn embed(window: &tauri::Window) -> Result<(), String> {
     let hwnd = get_hwnd(window)?;
-    // GHR_WALLPAPER_LAYER：万一新宿主在某个系统上表现不对，设这个环境变量挂回旧的壁纸层
-    let force_wallpaper = std::env::var("GHR_WALLPAPER_LAYER").is_ok();
-    let desktop = if force_wallpaper {
-        None
-    } else {
-        find_desktop_host()
-    };
-    // 只有首选落空才发 0x052C 分裂壁纸层，避免每轮嵌入都去动 Explorer
-    let workerw = if desktop.is_none() {
-        find_workerw()
-    } else {
-        None
-    };
-    let host = choose_host(desktop, workerw).ok_or("未找到桌面宿主，嵌入失败")?;
+    let host = find_host().ok_or("未找到桌面宿主，嵌入失败")?;
+    // 排查交互问题时，日志先把宿主层级说清楚（只打层级名，不打句柄与环境）
+    println!(
+        "[winembed] 嵌入 {}",
+        if prefer_desktop_host() {
+            "桌面图标层宿主（实验）"
+        } else {
+            "壁纸层 WorkerW"
+        }
+    );
     unsafe {
         let _ = SetParent(hwnd, Some(host));
         // WS_EX_TOOLWINDOW：不进 Alt+Tab / 任务栏
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | (WS_EX_TOOLWINDOW.0 as isize));
-        // 与 DefView 是兄弟，放到 Z 序顶部 = 图标之上；父在桌面层，仍被所有普通窗口盖住
+        // 与同层兄弟窗口竞争 Z 序，确保自己可见；父在桌面层，仍被所有普通窗口盖住
         bring_to_front(hwnd);
     }
     *EMBED_PARENT.lock().unwrap() = Some(host.0 as isize);
@@ -158,14 +186,14 @@ fn should_restore(embedded: bool, user_hidden: bool, visible: bool, iconic: bool
     embedded && !user_hidden && (!visible || iconic)
 }
 
-// 免疫 Win+D 的兜底。主防线是 embed() 挂到 SHELLDLL_DefView 的宿主（Shell 跳过它）；
-// 万一某些 Shell 版本仍把桌面层藏了，这里负责把父窗口和子窗口一起显示回来，
-// 顺带在 Explorer 重建导致父句柄失效时重新嵌入。
-pub fn restore_if_hidden_by_win_d(window: &tauri::WebviewWindow) {
-    let Ok(hwnd) = window.hwnd() else { return };
+// 免疫 Win+D 的兜底：Shell 把桌面层藏了时，父窗口和子窗口一起显示回来，
+// 顺带在 Explorer 重建导致父句柄失效时重新嵌入。返回 false 表示唤回后仍不健康，
+// 调用方据此退避，避免和 Shell 形成 200ms 一次的高频拉锯。
+pub fn restore_if_hidden_by_win_d(window: &tauri::WebviewWindow) -> bool {
+    let Ok(hwnd) = window.hwnd() else { return true };
     let (visible, iconic) = unsafe {
         if !IsWindow(Some(hwnd)).as_bool() {
-            return;
+            return true;
         }
         (IsWindowVisible(hwnd).as_bool(), IsIconic(hwnd).as_bool())
     };
@@ -175,15 +203,18 @@ pub fn restore_if_hidden_by_win_d(window: &tauri::WebviewWindow) {
         visible,
         iconic,
     ) {
-        return;
+        return true;
+    }
+    // 正在按下鼠标时跳过：唤回会 SetWindowPos，打断点击/拖拽的按下抬起配对
+    if mouse_busy() {
+        return true;
     }
     unsafe {
-        // Explorer 重启会让 Progman / WorkerW 句柄失效，重新挂到当前桌面宿主
         let parent_dead = embed_parent()
             .map(|p| !IsWindow(Some(p)).as_bool())
             .unwrap_or(true);
         if parent_dead
-            && let Some(host) = find_desktop_host().or_else(find_workerw)
+            && let Some(host) = find_host()
         {
             let _ = SetParent(hwnd, Some(host));
             *EMBED_PARENT.lock().unwrap() = Some(host.0 as isize);
@@ -198,6 +229,7 @@ pub fn restore_if_hidden_by_win_d(window: &tauri::WebviewWindow) {
             let _ = ShowWindow(p, SW_SHOWNA);
         }
         bring_to_front(hwnd);
+        IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool()
     }
 }
 
@@ -241,17 +273,37 @@ mod winembed_tests {
     }
 
     #[test]
-    fn host_prefers_desktop_icon_layer() {
+    fn host_defaults_to_interactive_wallpaper_layer() {
         let desktop = HWND(11 as *mut _);
         let workerw = HWND(22 as *mut _);
         assert_eq!(
-            choose_host(Some(desktop), Some(workerw)).map(|h| h.0 as isize),
-            Some(11)
-        );
-        assert_eq!(
-            choose_host(None, Some(workerw)).map(|h| h.0 as isize),
+            choose_host(Some(desktop), Some(workerw), false).map(|h| h.0 as isize),
             Some(22)
         );
-        assert!(choose_host(None, None).is_none());
+    }
+
+    #[test]
+    fn experimental_flag_prefers_desktop_icon_layer() {
+        let desktop = HWND(11 as *mut _);
+        let workerw = HWND(22 as *mut _);
+        assert_eq!(
+            choose_host(Some(desktop), Some(workerw), true).map(|h| h.0 as isize),
+            Some(11)
+        );
+    }
+
+    #[test]
+    fn host_falls_back_when_preferred_layer_missing() {
+        let desktop = HWND(11 as *mut _);
+        let workerw = HWND(22 as *mut _);
+        assert_eq!(
+            choose_host(None, Some(workerw), true).map(|h| h.0 as isize),
+            Some(22)
+        );
+        assert_eq!(
+            choose_host(Some(desktop), None, false).map(|h| h.0 as isize),
+            Some(11)
+        );
+        assert!(choose_host(None, None, false).is_none());
     }
 }

@@ -78,7 +78,7 @@ todo.md               待办与里程碑进度
 
 ## 已知未解（详见 todo.md）
 
-- Win+D 仍会隐藏贴桌面模式的窗口
+- Win+D 会让贴桌面窗口短暂隐藏，守护协程 200ms 内自动唤回（默认挂壁纸层 WorkerW；GHR_DESKTOP_HOST 可实验图标层宿主，但会吞掉鼠标输入）
 - Explorer 重启后嵌入失效需手动切模式（未做自动重嵌）
 - PAT 明文存 config.json（待迁移 Windows 凭据管理器）
 - 嵌入模式下键盘输入待充分验证（PAT 输入框路径）
