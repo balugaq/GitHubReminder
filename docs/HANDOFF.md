@@ -95,7 +95,7 @@ todo.md                待办与里程碑进度
 
 ## 已知未解（详见 todo.md）
 
-- Win+D 守护经过多轮修复，当前版本（不依赖可见性判定 + 1s 保底提速 + 覆盖未嵌入模式）**待重启后实测确认**；异常时日志会打印 `[winembed] 守护唤回: visible=… iconic=… embedded=… user_hidden=…`，据此可一次定位卡在哪一环
+- Win+D 守护与贴桌面后的鼠标交互已于 2026-11-07 由主人实测确认修复（宿主 WorkerW + 200ms guard_tick + 1s raise_z）；异常时日志仍会打印 `[winembed] 守护唤回: visible=… iconic=… embedded=… user_hidden=…`，据此可一次定位卡在哪一环
 - 置顶模式（未嵌入）的免疫与「手动最小化」边界靠 `USER_HIDDEN` 标记区分，同样待实测
 - QQ 机器人 AppSecret 仍明文存 config.json（待迁移 Windows 凭据管理器）
 - 搜索「涉及的人」不含评论者（采集层未解析 Comment.user）；旧存档里的历史卡片缺 author / people，需等该卡片有新事件才补全
