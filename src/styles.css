@@ -286,6 +286,13 @@ button { font-family: inherit; }
 .status-tab:hover { opacity: 0.9; background: rgba(255, 255, 255, 0.12); }
 .status-tab.active { opacity: 1; font-weight: 700; background: rgba(255, 255, 255, 0.18); }
 
+/* 分类图标：和文字同组，不新增 flex 间距；窗口下限 240px，能省一点是一点 */
+.tab-label { white-space: nowrap; }
+.tab-emoji {
+  margin-right: 3px;
+  line-height: 1;
+}
+
 /* 计数：与文字同高、灰色、无底色 */
 .tab-count {
   font-size: 12px;
