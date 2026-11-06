@@ -63,19 +63,21 @@
   - 折叠策略调整：去掉「最多 8 条 + 折叠」，改为**全部条目都发**，超长按 qqrelay 的 1900 字上限分段（split_text 已按行切，链接不会被截断）。
   - 已实现：github.rs 的 Event 补 `author`/`assignees` 字段（Issue/IssueDetail/Release 均补 GhUser，poll_item 提前抓一次 issue 详情供 state/comment 共用，comment 的 author/assignees 取所属 issue）；store.rs 的 Config 补 `github_username`；lib.rs 新增 `set_github_username` 命令并重写 `qq_summary`；manage.html/manage.js 加用户名输入项。
   - 验收：新增 5 个 QQ 文案单元测试（三行格式逐字断言、@me 条件、用户名大小写、12 条不折叠）全通过；cargo clippy -D warnings 零警告；node --check 通过。
-  - 待主人实测：填好用户名后，QQ 推送应形如「[@me] [ytdd9527] · 标题」；系统 Toast 文案未改（仍为精简式），如需同步可再提。
+  - 待主人实测：填好用户名后，QQ 推送应形如「[@me] [octocat] · 标题」；系统 Toast 文案未改（仍为精简式），如需同步可再提。
 
 
 - [x] **QQ 推送文案改为多行卡片式**（完成 2026-11-01 @master直改，待主人实测 QQ 推送效果）：
   ```
   [GitHubReminder] 通知 · GitHub 动态
-  PR #459 · ytd9527/NetworksExpansion
-  fix: 修改元件转运台逻辑
-  https://github.com/ytd9527/NetworksExpansion/pull/459
+  PR #459 · octocat/hello-world
+  fix: 示例提交标题
+  https://github.com/octocat/hello-world/pull/459
   ```
   即：第一行应用名+通知类别，第二行类型+编号+仓库，第三行标题，第四行链接（issue/pr/release 各自拼对应 URL）。当前是「#459 fix: 标题 ...以及另外 N 条新动态」的聚合一行式，要改。
-  实现：qq_summary 每事件三行（`类型 #n · 仓库` / 标题 / 链接），推送头一行 `[GitHubReminder] 通知 · GitHub 动态`；评论统一「有新消息」。注意：按新模板**去掉了 [@me]/[用户名] 标记**，github_username 设置项保留未删（如需恢复标记可再加回）。
+  实现：qq_summary 每事件三行（`类型 #n · 仓库` / 标题 / 链接），推送头一行 `[GitHubReminder] 通知 · GitHub 动态`；评论统一「有新消息」。2026-11-06 按主人要求把 `[@me]`/`[用户名]` 标记**加回标题行**（`[@me] [author] · 标题`）：[@me] 仅在 assignee 含设置里的 GitHub 用户名时显示，其他情况只留 `[author]` 或纯标题。
+- [x] **拉取可靠性：不依赖时间戳判断新事件**（完成 2026-11-01 @master直改，待主人实测）
   实现：github.rs 新增 entity_seen 兜底——poll_issues 报前查实体表已有该 repo+number 则跳过；poll_closed 报前查实体 state 已是 closed 则跳过。时间戳游标仍是主判定，兜底只在游标异常时防重报；实体被 200 条上限裁剪后回到纯游标。新增 2 个单测。
+- [x] **主界面启动不显示 / 窗口过小：位置记忆存到最小化离屏矩形**（完成 2026-11-06 @master直改，未提交待主人实测）：config.json 实测存的是 `x/y=-32000` + `199×34`，启动时 set_size/set_position 把它恢复到屏幕外。修复：① remember_window 跳过最小化/隐藏事件与离屏/小于 240 的矩形；② 启动读到坏存档则忽略、置空并落盘自愈；③ tauri.conf 主窗口 minWidth/minHeight 改 240×240 且运行时 set_min_size 兜底（配置只约束拖拽）；④ 托盘切换遇到离屏/过小窗口强制拉回居中。新增 3 个几何单测。
 - [x] **添加仓库时弹出 Issue/PR 选择弹窗**（完成 2026-11-01 @master直改，待主人实测；后端 list_repo_items 命令 + 管理窗口勾选弹窗，开/闭状态筛选，勾中按单条监听（新评论+状态变更）批量添加，已在监听的置灰默认勾选，重复添加报错汇总提示；视觉待主人目视确认）。
 - [x] **Explorer 重启后嵌入窗口的父级失效处理**（无需求，2026-11-01 主人确认不做）。
 - [ ] **主界面批量选择通知并标记状态**：通知卡片支持多选，批量标记状态（未读/已读/处理中/已完成）；标记完成后主界面底部向上弹出一个 toast，显示「已完成编辑」+ 撤销按钮，点撤销恢复到多选前的状态快照。

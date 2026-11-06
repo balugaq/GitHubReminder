@@ -329,8 +329,11 @@ fn restart_relay(state: &AppState) {
 // 格式（头部一行由 spawn_qq_push 拼上）：
 //   [GitHubReminder] 通知 · GitHub 动态
 //   PR #459 · owner/repo
-//   标题（评论统一显示「有新消息」）
+//   [@me] [author] · 标题（评论统一显示「有新消息」）
 //   https://github.com/owner/repo/pull/459
+//
+// [@me] 仅当该事件的 assignee 列表里有本人（设置里填的 GitHub 用户名）时出现；
+// [author] 是提 issue / pr 的人。两者都没有时标题行保持纯标题。
 fn event_kind_label(ev: &github::Event) -> &'static str {
     match ev.kind.as_str() {
         "release" => "Release",
@@ -342,7 +345,10 @@ fn event_kind_label(ev: &github::Event) -> &'static str {
     }
 }
 
-fn qq_summary(events: &[github::Event]) -> String {
+fn qq_summary(events: &[github::Event], my_username: Option<&str>) -> String {
+    let me = my_username
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty());
     let mut lines: Vec<String> = Vec::new();
     for ev in events {
         let head = match ev.number {
@@ -354,8 +360,23 @@ fn qq_summary(events: &[github::Event]) -> String {
         } else {
             ev.title.clone()
         };
+        let at_me = me.as_ref().is_some_and(|m| {
+            ev.assignees.iter().any(|a| a.trim().to_lowercase() == *m)
+        });
+        let mut marks = String::new();
+        if at_me {
+            marks.push_str("[@me] ");
+        }
+        if !ev.author.is_empty() {
+            marks.push_str(&format!("[{}] ", ev.author));
+        }
+        let title_line = if marks.is_empty() {
+            title
+        } else {
+            format!("{marks}· {title}")
+        };
         lines.push(head);
-        lines.push(title);
+        lines.push(title_line);
         lines.push(ev.url.clone());
     }
     lines.join("\n")
@@ -369,7 +390,7 @@ fn spawn_qq_push(cfg: &Config, events: &[github::Event]) {
     }
     let text = format!(
         "[GitHubReminder] 通知 · GitHub 动态\n{}",
-        qq_summary(events)
+        qq_summary(events, cfg.github_username.as_deref())
     );
     if cfg.qq_autoconfig {
         let Some(rc) = relay_cfg_of(cfg) else {
@@ -436,11 +457,41 @@ fn toast_summary(events: &[github::Event]) -> String {
 }
 
 // 记录主窗口位置/尺寸：内存即时更新，落盘按 1s 节流（拖动过程高频触发）；
+// 主窗口最小尺寸（逻辑像素），与 tauri.conf 的 minWidth/minHeight 保持一致
+const MIN_WINDOW_SIZE: f64 = 240.0;
+// Windows 最小化会把窗口移到 (-32000,-32000)，这类坐标不是用户真实位置
+const OFFSCREEN_XY_LIMIT: f64 = -10000.0;
+
+fn min_window_px(window: &tauri::Window) -> f64 {
+    MIN_WINDOW_SIZE * window.scale_factor().unwrap_or(1.0)
+}
+
+// 最小化/隐藏时的 Moved/Resized 会给出离屏坐标和极小尺寸，存下来会让下次启动恢复到屏幕外
+fn rect_is_plausible(x: f64, y: f64, width: f64, height: f64, min_px: f64) -> bool {
+    x > OFFSCREEN_XY_LIMIT
+        && y > OFFSCREEN_XY_LIMIT
+        && width >= min_px
+        && height >= min_px
+}
+
 // 关闭隐藏前把节流计时清零再调一次，保证最终位置一定落盘
 fn remember_window(state: &AppState, window: &tauri::Window) {
+    if window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true) {
+        return;
+    }
     let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) else {
         return;
     };
+    let min_px = min_window_px(window);
+    if !rect_is_plausible(
+        pos.x as f64,
+        pos.y as f64,
+        size.width as f64,
+        size.height as f64,
+        min_px,
+    ) {
+        return;
+    }
     let rect = store::WindowRect {
         x: pos.x as f64,
         y: pos.y as f64,
@@ -499,15 +550,43 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+// 托盘切换时顺带体检：离屏/过小的窗口会被拉回屏幕中央，光 show 唤不回来
+fn main_window_geometry_ok(window: &tauri::WebviewWindow) -> bool {
+    let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+        return false;
+    };
+    let min_px = MIN_WINDOW_SIZE * window.scale_factor().unwrap_or(1.0);
+    rect_is_plausible(
+        pos.x as f64,
+        pos.y as f64,
+        size.width as f64,
+        size.height as f64,
+        min_px,
+    )
+}
+
 fn toggle_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        let broken = !main_window_geometry_ok(&w);
         match w.is_visible() {
-            Ok(true) => {
+            Ok(true) if !broken => {
                 // 这是主人主动藏，Win+D 守护协程见到 USER_HIDDEN 要放手
                 winembed::USER_HIDDEN.store(true, Ordering::Relaxed);
                 let _ = w.hide();
             }
             _ => {
+                if broken {
+                    let min_px = MIN_WINDOW_SIZE * w.scale_factor().unwrap_or(1.0);
+                    let _ = w.set_min_size(Some(tauri::LogicalSize::new(
+                        MIN_WINDOW_SIZE,
+                        MIN_WINDOW_SIZE,
+                    )));
+                    let _ = w.set_size(tauri::PhysicalSize::new(
+                        min_px.round() as u32,
+                        min_px.round() as u32,
+                    ));
+                    let _ = w.center();
+                }
                 winembed::USER_HIDDEN.store(false, Ordering::Relaxed);
                 let _ = w.show();
                 let _ = w.set_focus();
@@ -728,11 +807,13 @@ async fn do_poll_inner(app: &tauri::AppHandle, state: &AppState) -> u64 {
     now
 }
 
-// Win+D 会藏掉贴桌面的嵌入窗口且托盘唤不回（不在任务栏），定时检测自动唤回
+// 免疫 Win+D 的兜底：主防线是 winembed::embed 把窗口挂到 SHELLDLL_DefView 的宿主
+// （Shell 的「显示桌面」跳过那一层）。这里 200ms 体检一次，偶发被藏时肉眼无感地唤回；
+// 主人主动隐藏时 USER_HIDDEN 会让守护放手，不会和托盘开关抢窗口。
 fn spawn_visibility_guard(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             if let Some(w) = app.get_webview_window("main") {
                 winembed::restore_if_hidden_by_win_d(&w);
             }
@@ -792,20 +873,12 @@ fn sorted_entities(state: &AppState) -> Vec<Entity> {
     v
 }
 
-// Result 而非裸 Vec：失败要落到后端日志——前端 flash 报错而后台毫无痕迹时没法排查
+// 启动竞态：首轮轮询、窗口位置落盘都可能短暂持有 config 锁。
+// 原先 try_lock 一撞就返回 Err，前端会立刻把整张列表抹空，而 ghr-events 又不一定会来；
+// config 的临界区都很短（内存操作或一次小文件写入），阻塞等几毫秒不会死锁。
 #[tauri::command]
-fn get_events(state: tauri::State<Arc<AppState>>) -> Result<Vec<Entity>, String> {
-    let mut v = match state.config.try_lock() {
-        Ok(cfg) => cfg.entities.clone(),
-        Err(e) => {
-            // 中毒/被持有都要在后端留下痕迹，前端只能拿到这串字符串
-            let msg = format!("实体列表不可读（锁状态: {e:?}）");
-            eprintln!("[events] get_events 失败: {msg}");
-            return Err(msg);
-        }
-    };
-    v.sort_by(|a, b| b.updated_at.cmp(&a.updated_at)); // 最近变更在上
-    Ok(v)
+fn get_events(state: tauri::State<Arc<AppState>>) -> Vec<Entity> {
+    sorted_entities(state.inner().as_ref())
 }
 
 // 右键菜单改状态：按 repo+number 定位聚合实体（同一 issue/PR 只有一张卡）
@@ -967,6 +1040,31 @@ pub fn run() {
                 cnt("done"),
                 cfg.entities.iter().filter(|e| e.pinned).count()
             );
+            // 恢复上次的位置/尺寸（物理像素，覆盖 tauri.conf 的 center）；坏存档忽略并自愈清掉
+            if let Some(w) = app.get_webview_window("main") {
+                // 配置里的 minWidth/minHeight 只约束用户拖拽，程序化 set_size 不走那条限制
+                let _ = w.set_min_size(Some(tauri::LogicalSize::new(
+                    MIN_WINDOW_SIZE,
+                    MIN_WINDOW_SIZE,
+                )));
+                if let Some(rect) = cfg.window {
+                    let min_px = MIN_WINDOW_SIZE * w.scale_factor().unwrap_or(1.0);
+                    if rect_is_plausible(rect.x, rect.y, rect.width, rect.height, min_px) {
+                        let _ = w.set_size(tauri::PhysicalSize::new(
+                            rect.width.round() as u32,
+                            rect.height.round() as u32,
+                        ));
+                        let _ = w.set_position(tauri::PhysicalPosition::new(
+                            rect.x.round() as i32,
+                            rect.y.round() as i32,
+                        ));
+                    } else {
+                        println!("[init] 窗口矩形离屏或过小，已忽略并按默认居中显示");
+                        cfg.window = None;
+                        store::save(&path, &cfg);
+                    }
+                }
+            }
             let state = Arc::new(AppState {
                 path,
                 config: Mutex::new(cfg.clone()),
@@ -976,17 +1074,6 @@ pub fn run() {
                 relay: Mutex::new(None),
                 last_win_save: Mutex::new(0),
             });
-            // 恢复上次的位置/尺寸（物理像素，直接设回；覆盖 tauri.conf 的 center）
-            if let (Some(rect), Some(w)) = (cfg.window, app.get_webview_window("main")) {
-                let _ = w.set_size(tauri::PhysicalSize::new(
-                    rect.width.round() as u32,
-                    rect.height.round() as u32,
-                ));
-                let _ = w.set_position(tauri::PhysicalPosition::new(
-                    rect.x.round() as i32,
-                    rect.y.round() as i32,
-                ));
-            }
             // 自动配置开着且配置齐全的话，启动内置 QQ 中转服务
             restart_relay(&state);
             spawn_poller(app.handle().clone(), state.clone());
@@ -1063,48 +1150,91 @@ pub fn run() {
 }
 
 #[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_minimized_geometry() {
+        assert!(!rect_is_plausible(-32000.0, -32000.0, 199.0, 34.0, 240.0));
+    }
+
+    #[test]
+    fn rejects_window_smaller_than_min() {
+        assert!(!rect_is_plausible(100.0, 100.0, 239.0, 320.0, 240.0));
+        assert!(!rect_is_plausible(100.0, 100.0, 480.0, 200.0, 240.0));
+    }
+
+    #[test]
+    fn accepts_normal_and_negative_monitor_coords() {
+        assert!(rect_is_plausible(100.0, 100.0, 480.0, 320.0, 240.0));
+        assert!(rect_is_plausible(-1920.0, 0.0, 480.0, 320.0, 240.0));
+    }
+}
+
+#[cfg(test)]
 mod qq_tests {
     use super::*;
 
     fn ev(kind: &str, num: Option<u64>, path: &str) -> github::Event {
         github::Event {
             kind: kind.into(),
-            repo: "ytd9527/NetworksExpansion".into(),
+            repo: "octocat/hello-world".into(),
             number: num,
-            title: "fix: 修改元件转运台逻辑".into(),
-            url: format!("https://github.com/ytd9527/NetworksExpansion/{path}"),
+            title: "fix: 示例提交标题".into(),
+            url: format!("https://github.com/octocat/hello-world/{path}"),
             created_at: "2026-11-01T00:00:00+08:00".into(),
-            author: "ytd9527".into(),
-            assignees: vec!["ytd9527".into()],
+            author: "octocat".into(),
+            assignees: vec!["octocat".into()],
         }
     }
 
     #[test]
     fn qq_summary_uses_card_style_four_line_block() {
         let events = vec![ev("pr", Some(459), "pull/459")];
-        let text = format!("[GitHubReminder] 通知 · GitHub 动态\n{}", qq_summary(&events));
+        let text = format!(
+            "[GitHubReminder] 通知 · GitHub 动态\n{}",
+            qq_summary(&events, Some("octocat"))
+        );
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines[0], "[GitHubReminder] 通知 · GitHub 动态");
-        assert_eq!(lines[1], "PR #459 · ytd9527/NetworksExpansion");
-        assert_eq!(lines[2], "fix: 修改元件转运台逻辑");
-        assert_eq!(lines[3], "https://github.com/ytd9527/NetworksExpansion/pull/459");
+        assert_eq!(lines[1], "PR #459 · octocat/hello-world");
+        assert_eq!(lines[2], "[@me] [octocat] · fix: 示例提交标题");
+        assert_eq!(lines[3], "https://github.com/octocat/hello-world/pull/459");
+    }
+
+    #[test]
+    fn qq_summary_hides_at_me_when_not_assignee() {
+        let mut e = ev("issue", Some(461), "issues/461");
+        e.assignees = vec!["other".into()];
+        let text = qq_summary(&[e], Some("octocat"));
+        assert!(!text.contains("[@me]"), "不在 assignee 列表里就不该出现 @me：{text}");
+        assert!(text.contains("[octocat] · "), "提 issue 的人仍在：{text}");
+    }
+
+    #[test]
+    fn qq_summary_no_at_me_when_username_not_configured() {
+        let events = vec![ev("issue", Some(461), "issues/461")];
+        let text = qq_summary(&events, None);
+        assert!(!text.contains("[@me]"), "未填用户名时不应判断：{text}");
+        assert!(text.contains("[octocat] · "), "但用户名标记仍应显示：{text}");
     }
 
     #[test]
     fn qq_summary_comment_shows_generic_message() {
         let events = vec![ev("comment", Some(461), "issues/461")];
-        let text = qq_summary(&events);
+        let text = qq_summary(&events, None);
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "Issue #461 · ytd9527/NetworksExpansion");
-        assert_eq!(lines[1], "有新消息");
+        assert_eq!(lines[0], "Issue #461 · octocat/hello-world");
+        assert!(lines[1].ends_with("· 有新消息"), "评论标题统一「有新消息」：{}", lines[1]);
     }
 
     #[test]
     fn qq_summary_release_has_no_number() {
         let mut rel = ev("release", None, "releases/tag/v1");
         rel.title = "v1.0".into();
-        let text = qq_summary(&[rel]);
-        assert!(text.starts_with("Release · ytd9527/NetworksExpansion\nv1.0\n"));
+        let text = qq_summary(&[rel], None);
+        assert!(text.starts_with("Release · octocat/hello-world\n"));
+        assert!(text.contains("[octocat] · v1.0"), "发布者应显示在标题行：{text}");
     }
 
     #[test]
@@ -1112,7 +1242,7 @@ mod qq_tests {
         let events: Vec<github::Event> = (1..=12)
             .map(|n| ev("issue", Some(n), &format!("issues/{n}")))
             .collect();
-        let text = qq_summary(&events);
+        let text = qq_summary(&events, None);
         for n in 1..=12 {
             assert!(
                 text.contains(&format!("Issue #{n} · ")),

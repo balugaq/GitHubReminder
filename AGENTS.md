@@ -47,7 +47,7 @@
   ```bash
   git branch -d worktree/<短名> && git worktree remove ../GitHubReminder-wt-<短名>
   ```
-- **红线**：不 push、不碰远程、不 rebase / reset / 改写已有历史。提交与推送的最终决定权归主人。
+- **红线**：不 push、不碰远程、不 rebase / reset / 改写已有历史。push 与历史改写的决定权归主人；任务级 commit 由 AI 及时完成（见 §5）。
 
 ### 2.3 冲突处理
 - 合并前先 `git merge --no-commit --no-ff` 干跑检查冲突（或直接观察 merge 输出）。
@@ -70,3 +70,27 @@ worktree 中的工作要合并进 master，必须满足：
 - 删除大体积构建产物（target 等）时，Windows 安全删除钩子对大目录整树删除会失败（trash 失败即拒绝），需先清零文件内容再删，或交主人手动 `rmdir /s /q`。
 - 本机访问 GitHub API 依赖 Watt Toolkit MITM + native-tls + 强制 IPv4，勿动这三层。
 - 数据文件在 `%APPDATA%\com.githubreminder.app\config.json`，含 token，不外传、不打印内容。
+
+## 5. 提交规范：及时 commit + 提交前敏感信息检查
+
+### 5.1 及时提交
+- 一个任务做完并通过验收后**立即 commit**，不积压到下一个任务、不等主人来问。todo.md 状态同步与验收本身算任务的一部分，一起提交。
+- 原则上「一个任务一个 commit」。确实拆不开（同一文件被多轮任务改动、无法用文件级边界区分）时才合并为一个 commit，但 message 要概括每项改动，并在汇报里说明合并原因。
+- 提交前用 `git status --short` + `git diff --stat` 确认范围，不夹带无关文件、不夹带构建产物与本地配置。
+- **红线不变**：不 push、不碰远程、不 rebase / reset / 改写已有历史。本节覆盖 §2.2 里「提交决定权归主人」的旧表述：任务级 commit 由 AI 主动完成，主人保留的是 push 与历史改写的决定权。
+- 验收不通过、编译/静态核对有未解错误时**不许提交**，只汇报阻塞原因。
+
+### 5.2 每次 commit 前的强制检查（硬闸门）
+检查对象是**本次暂存的全部内容**（`git diff --cached`，含新增文件和删除行的上下文），不是只看改动摘要。
+
+1. **凭据类**：GitHub PAT / `ghp_` / `github_pat_`、token、client_secret、cookie、Authorization / Bearer 头、QQ 机器人 webhook 与中转密钥、私钥、`%APPDATA%\...\config.json` 的实际内容。
+2. **真实身份 / 业务数据**：真实 GitHub 用户名、真实仓库名与组织名、真实 issue / PR 标题与编号、真实 QQ 号 / 邮箱 / 手机号、真实统计数字、真实日志或截图片段。
+3. **模板与示例数据（重点）**：单测 fixture、注释里的示例、文档模板、默认配置、推送文案样例，一律使用**常规通用示例**——`owner/repo`、`octocat/hello-world`、`example.com`、`alice` / `bob`、`#123`、`示例标题`。凡是看起来像真实账号、真实仓库、真实提交标题的，先替换成通用值再提交。历史提交里遗留的也要顺手改掉。
+4. **本机环境**：`C:\Users\<真实用户名>`、本机绝对路径、内网地址、调试用环境变量的真实取值。
+
+执行方式：
+- 逐文件读一遍暂存 diff，再用 grep 扫上述关键词（中英文都扫）。
+- 命中后判断是不是通用示例；不是就替换成通用值，**替换完重新检查一遍**才能提交。
+- 汇报里必须写清检查结果：「已检查 N 个文件，无敏感信息」或「已把 X 替换为通用示例」。
+- 拿不准是否敏感（例如来源不明的长串 token 样式字符串）→ **停下来问主人，不猜、不先提交**。
+- 检查只读取内容，绝不把 `%APPDATA%` 下的配置内容打印到对话、日志或仓库里。

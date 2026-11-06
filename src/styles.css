@@ -304,20 +304,17 @@ button { font-family: inherit; }
   text-align: center;
 }
 
-/* ---- 分页展开按钮（滑到底部可见） ---- */
-.btn-expand {
-  margin: 2px 0 4px;
+/* ---- 触底续展哨兵：纯提示，进入视口即自动加载下一批 ---- */
+.feed-more-hint {
+  margin: 4px 0 6px;
   padding: 6px 10px;
-  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border: 1px dashed rgba(255, 255, 255, 0.22);
   border-radius: 7px;
-  background: transparent;
   color: var(--text);
-  font-family: inherit;
   font-size: 11.5px;
-  opacity: 0.8;
-  cursor: pointer;
+  text-align: center;
+  opacity: 0.6;
 }
-.btn-expand:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
 
 /* ---- 卡片右键菜单 ---- */
 #ctx-menu {
@@ -445,3 +442,6 @@ button { font-family: inherit; }
 /* 滚动条 */
 #content::-webkit-scrollbar { width: 6px; }
 #content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
+/* 事件列表才是实际滚动区，给它同款细滚动条，避免通知多时冒出一条粗系统滚动条 */
+#event-feed::-webkit-scrollbar { width: 6px; }
+#event-feed::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }

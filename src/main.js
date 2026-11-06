@@ -47,8 +47,11 @@ async function refreshConfig() {
   config = await invoke("get_config");
 }
 
-// 配置可能被管理窗口改动，焦点回来时重拉一遍，避免主页展示过期状态
+// 配置可能被管理窗口改动，焦点回来时重拉一遍，避免主页展示过期状态。
+// 同时静默补拉一次通知：启动那次 get_events 若撞上启动竞态失败，这里就是自愈通道；
+// 已有通知的显示不该依赖首轮轮询是否跑完（ghr-events 只在有「新事件」时才广播）。
 async function syncFromRust() {
+  await refreshEvents({ silent: true });
   try {
     await refreshConfig();
   } catch {
@@ -92,10 +95,13 @@ const KIND_LABEL = { issue: "Issue", pr: "PR", release: "Release", comment: "评
 // 实体最近一次变化的中文摘要 + 状态中文（Todo6：以 issue/pr/release 为单位的聚合卡片）
 const LAST_EVENT_LABEL = { open: "新建/开启", comment: "新评论", state: "状态变更", closed: "已关闭", release: "新版本" };
 const STATE_LABEL = { open: "进行中", closed: "已关闭", published: "已发布" };
-const PAGE_SIZE = 50; // 每个分类默认最多 50 条，展开再加 50
+const INITIAL_LIMIT = 100; // 默认只渲染 100 条，通知再多也不会一次性铺满滚动区
+const LOAD_MORE_STEP = 100; // 滑到底自动再追加 100 条
+const NEAR_BOTTOM_MARGIN = "32px 0px"; // 哨兵进入距底部 32px 就预加载下一批
 
 let activeStatus = "all";
-let feedLimit = PAGE_SIZE;
+let feedLimit = INITIAL_LIMIT;
+let feedObserver = null;
 
 // 全量事件（含历史持久化），新事件追加，状态以后端为准
 let allEvents = [];
@@ -189,7 +195,42 @@ function renderTabs() {
   }
 }
 
+// 后端已按 updatedAt 降序，这里只按分类过滤；渲染和续展共用同一份列表
+function filteredEvents() {
+  return activeStatus === "all"
+    ? allEvents
+    : allEvents.filter((ev) => (ev.status || "unread") === activeStatus);
+}
+
+// 列表末尾的哨兵进入视口就自动追加下一批。每次 renderFeed 都会重建哨兵，
+// 所以观察器也跟着重建；用交叉观察而不是 scroll 算阈值，重渲染时不会误触发，
+// 也不会出现「内容不够高、没有滚动条就永远加载不了」的死角。
+function observeFeedSentinel() {
+  if (feedObserver) {
+    feedObserver.disconnect();
+    feedObserver = null;
+  }
+  const sentinel = document.getElementById("feed-more-hint");
+  if (!sentinel) return;
+  feedObserver = new IntersectionObserver(
+    (entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      const list = filteredEvents();
+      if (feedLimit >= list.length) return;
+      feedLimit = Math.min(feedLimit + LOAD_MORE_STEP, list.length);
+      renderFeed();
+    },
+    { root: document.getElementById("event-feed"), rootMargin: NEAR_BOTTOM_MARGIN }
+  );
+  feedObserver.observe(sentinel);
+}
+
 function renderFeed() {
+  // 列表会被整体重建，旧哨兵已失效，先断开观察器，避免回调打到空节点
+  if (feedObserver) {
+    feedObserver.disconnect();
+    feedObserver = null;
+  }
   renderPinned();
   renderTabs();
   const feed = document.getElementById("event-feed");
@@ -206,11 +247,7 @@ function renderFeed() {
     showHint(`暂无新事件。轮询每 ${config.pollInterval || 60} 秒一次，有新动态会自动浮现。`);
     return;
   }
-  // 后端已按 updatedAt 降序，这里只按分类过滤
-  const list =
-    activeStatus === "all"
-      ? allEvents
-      : allEvents.filter((ev) => (ev.status || "unread") === activeStatus);
+  const list = filteredEvents();
   if (list.length === 0) {
     showHint(
       activeStatus === "all"
@@ -223,18 +260,15 @@ function renderFeed() {
   for (const ev of shown) feed.appendChild(buildCard(ev));
   const rest = list.length - shown.length;
   if (rest > 0) {
-    // 按钮排在列表末尾，滚到底即可见，点一次多展开 50 条
-    const btn = document.createElement("button");
-    btn.id = "btn-expand";
-    btn.className = "btn-expand";
-    btn.textContent = `展开更多（还有 ${rest} 条）`;
-    btn.addEventListener("click", () => {
-      feedLimit += PAGE_SIZE;
-      renderFeed();
-    });
-    feed.appendChild(btn);
+    // 纯提示哨兵：滚到这里会自动加载下一批，不用再手动点按钮
+    const hint = document.createElement("p");
+    hint.id = "feed-more-hint";
+    hint.className = "feed-more-hint";
+    hint.textContent = `向下滚动继续加载（还有 ${rest} 条）`;
+    feed.appendChild(hint);
   }
   feed.scrollTop = scrollTop;
+  observeFeedSentinel();
 }
 
 // ---- 状态变更 / 置顶 / 删除 / 复制 ----
@@ -364,28 +398,31 @@ function openContextMenu(ev, x, y) {
   menu.style.top = `${Math.max(4, top)}px`;
 }
 
-async function loadEvents() {
+// 统一的通知拉取入口（后端才是实体聚合的唯一真相，前端不自己 upsert）。
+// 两点很关键：
+// 1) 失败时保留现有数据、不清空——一次瞬时失败不该把整个列表抹成空白；
+// 2) 数据没变就不重绘，否则 focus 兜底每次都重建卡片、重放 fade-up 动画。
+async function refreshEvents({ silent = false } = {}) {
+  let next;
   try {
-    allEvents = await invoke("get_events");
+    next = await invoke("get_events");
   } catch (err) {
-    // 静默置空会让"取不到数据"看起来像"没有通知"，必须让用户看见错误
-    console.error("读取历史通知失败:", err);
-    flash(`读取通知失败：${err}`);
-    allEvents = [];
+    console.error("读取通知失败:", err);
+    if (!silent) flash(`读取通知失败：${err}`);
+    return false;
   }
+  if (JSON.stringify(next) === JSON.stringify(allEvents)) return true;
+  allEvents = next;
   renderFeed();
+  return true;
+}
+
+async function loadEvents() {
+  await refreshEvents();
 }
 
 async function addEvents() {
-  // 收到变化事件后直接从后端重拉已聚合的实体列表，避免前端自己维护 upsert
-  try {
-    allEvents = await invoke("get_events");
-  } catch (err) {
-    console.error("拉取通知失败:", err);
-    flash(`拉取通知失败：${err}`);
-    return;
-  }
-  renderFeed();
+  await refreshEvents();
 }
 
 // ---- 统计视图 ----
@@ -466,6 +503,8 @@ function applyWindowMode() {
 
 // ---- 初始化 ----
 (async function init() {
+  // 事件监听最先注册：首轮轮询 1s 后就可能 emit，等前面几个 await 跑完再注册会漏掉整批事件
+  listen("ghr-events", () => addEvents());
   applyAppearance();
   applyWindowMode();
 
@@ -478,6 +517,8 @@ function applyWindowMode() {
   await loadEvents();
   pickDefaultStatus();
   goDefaultView();
+  // 列表页初始是 hidden，显示出来后重新挂观察器，确保哨兵能被正确观察
+  observeFeedSentinel();
 
   // 首次启动引导改由主窗口引导页承担，不再自动弹出管理窗口
   // 启动竞态兜底：配置在两窗口同时初始化期间可能未就绪
@@ -489,7 +530,7 @@ function applyWindowMode() {
     btn.addEventListener("click", () => {
       if (activeStatus === btn.dataset.status) return;
       activeStatus = btn.dataset.status;
-      feedLimit = PAGE_SIZE;
+      feedLimit = INITIAL_LIMIT;
       renderFeed();
       document.getElementById("event-feed").scrollTop = 0;
     });
@@ -505,8 +546,6 @@ function applyWindowMode() {
   });
   window.addEventListener("blur", closeContextMenu);
   document.getElementById("event-feed").addEventListener("scroll", closeContextMenu);
-
-  listen("ghr-events", (e) => addEvents(e.payload));
 
   // 轮询失败不再占界面空间：后台每轮会照常打日志，这里只留 console 便于排查
   listen("ghr-poll-error", (e) => {
