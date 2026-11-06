@@ -568,8 +568,10 @@ fn main_window_geometry_ok(window: &tauri::WebviewWindow) -> bool {
 fn toggle_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let broken = !main_window_geometry_ok(&w);
-        match w.is_visible() {
-            Ok(true) if !broken => {
+        // 最小化的窗口 is_visible 仍为 true，不排除会把「托盘唤回」误判成「主人要隐藏」
+        let shown = w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false);
+        match shown {
+            true if !broken => {
                 // 这是主人主动藏，Win+D 守护协程见到 USER_HIDDEN 要放手
                 winembed::USER_HIDDEN.store(true, Ordering::Relaxed);
                 let _ = w.hide();
@@ -868,18 +870,23 @@ async fn do_poll_inner(app: &tauri::AppHandle, state: &AppState) -> u64 {
     now
 }
 
-// 免疫 Win+D 的兜底：窗口被桌面层连带藏掉时 200ms 内唤回；主人主动隐藏时放手。
-// 唤回无效就指数退避到 2s，避免和 Shell 反复拉锯——高频 ShowWindow/SetWindowPos
-// 会打断鼠标按下与抬起的配对，表现为窗口看得见却点不了、拖不动。
+// 免疫 Win+D 的兜底：200ms 体检唤回，另每 1s 无条件把窗口提回桌面层 Z 序顶部
+// （Win+D 未必改 WS_VISIBLE，只看可见性会漏判）。唤回无效则指数退避到 2s，
+// 避免与 Shell 拉锯——高频 SetWindowPos 会打断鼠标按下/抬起配对。
 fn spawn_visibility_guard(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut delay = 200u64;
+        let mut last_raise = std::time::Instant::now();
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-            let healthy = match app.get_webview_window("main") {
-                Some(w) => winembed::restore_if_hidden_by_win_d(&w),
-                None => true,
+            let Some(w) = app.get_webview_window("main") else {
+                continue;
             };
+            let raise_z = last_raise.elapsed() >= std::time::Duration::from_secs(1);
+            if raise_z {
+                last_raise = std::time::Instant::now();
+            }
+            let healthy = winembed::guard_tick(&w, raise_z);
             delay = if healthy { 200 } else { (delay * 2).min(2000) };
         }
     });
@@ -1184,6 +1191,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             winembed::set_window_mode,
+            winembed::user_minimize,
             get_config,
             set_token,
             set_proxy,

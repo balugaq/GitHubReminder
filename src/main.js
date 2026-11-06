@@ -481,7 +481,8 @@ async function openStats() {
 }
 
 // ---- 窗口控制 ----
-document.getElementById("btn-min").addEventListener("click", () => getCurrentWindow().minimize());
+// 标记 + 最小化交给后端一次做完，守护不会把主人主动最小化当成 Win+D 藏窗弹回来
+document.getElementById("btn-min").addEventListener("click", () => invoke("user_minimize"));
 document.getElementById("btn-close").addEventListener("click", () => getCurrentWindow().close());
 
 // 设置/管理/添加入口：开（或唤起）独立管理窗口

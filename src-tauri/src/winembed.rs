@@ -7,8 +7,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetCapture, 
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowExW, FindWindowW, GetClassNameW, GetWindowLongPtrW, IsIconic, IsWindow,
     IsWindowVisible, SendMessageW, SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    GWL_EXSTYLE, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_SHOWNA,
-    WS_EX_TOOLWINDOW,
+    GWL_EXSTYLE, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE,
+    SW_SHOWNA, WS_EX_TOOLWINDOW,
 };
 
 // 壁纸层 WorkerW 的句柄（默认嵌入宿主），枚举回调里写，枚举结束后读
@@ -21,8 +21,17 @@ static DESKTOP_HOST: Mutex<Option<isize>> = Mutex::new(None);
 static EMBED_PARENT: Mutex<Option<isize>> = Mutex::new(None);
 // 当前是否处于嵌入模式；Win+D 守护协程据此决定要不要唤回
 static EMBEDDED: AtomicBool = AtomicBool::new(false);
-// 用户主动隐藏（托盘开关/点关闭）时置位，守护协程见到就放手，否则会和主人抢窗口
+// 用户主动隐藏（托盘开关/点关闭/点最小化）时置位，守护协程见到就放手，否则会和主人抢窗口
 pub static USER_HIDDEN: AtomicBool = AtomicBool::new(false);
+// 异常状态只打一次日志，避免 200ms 体检把日志刷爆
+static GUARD_LOGGED: AtomicBool = AtomicBool::new(false);
+
+// 标记与最小化必须在同一次调用里完成，否则守护可能在两者之间抢先复位标记
+#[tauri::command]
+pub fn user_minimize(window: tauri::Window) {
+    USER_HIDDEN.store(true, Ordering::Relaxed);
+    let _ = window.minimize();
+}
 
 fn get_hwnd(window: &tauri::Window) -> Result<HWND, String> {
     window.hwnd().map_err(|e| format!("获取 HWND 失败: {e}"))
@@ -128,7 +137,8 @@ fn mouse_busy() -> bool {
 }
 
 // 复用的展示动作：子窗口没有 minimized/maximized 概念，SW_RESTORE 对它无效，
-// 要用 SW_SHOWNA + SWP_SHOWWINDOW；SWP_NOACTIVATE 保证不抢别的窗口焦点。
+// 要用 SW_SHOWNA + SWP_SHOWWINDOW；顶层窗口被最小化则由调用方先 SW_RESTORE。
+// SWP_NOACTIVATE 保证不抢别的窗口焦点。
 unsafe fn bring_to_front(hwnd: HWND) {
     let _ = unsafe { ShowWindow(hwnd, SW_SHOWNA) };
     let _ = unsafe {
@@ -181,15 +191,16 @@ fn unembed(window: &tauri::Window) -> Result<(), String> {
     Ok(())
 }
 
-// 是否需要动手唤回：只管贴桌面嵌入模式；主人主动隐藏时绝不插手
-fn should_restore(embedded: bool, user_hidden: bool, visible: bool, iconic: bool) -> bool {
-    embedded && !user_hidden && (!visible || iconic)
+// 是否需要唤回：不限嵌入模式（置顶 / 嵌入失败时 Win+D 一样会最小化窗口）；主人主动隐藏时放手
+fn should_restore(user_hidden: bool, visible: bool, iconic: bool) -> bool {
+    !user_hidden && (!visible || iconic)
 }
 
-// 免疫 Win+D 的兜底：Shell 把桌面层藏了时，父窗口和子窗口一起显示回来，
-// 顺带在 Explorer 重建导致父句柄失效时重新嵌入。返回 false 表示唤回后仍不健康，
-// 调用方据此退避，避免和 Shell 形成 200ms 一次的高频拉锯。
-pub fn restore_if_hidden_by_win_d(window: &tauri::WebviewWindow) -> bool {
+// 守护每轮调用。不再假设「Win+D 一定改了 WS_VISIBLE」：
+// ① 窗口/父链被藏或最小化就立即唤回；② 即使状态看着健康，也按 raise_z 低频把窗口
+// 重新提到桌面层 Z 序顶部，兜住 Shell 把桌面压到窗口前面（visible 却看不见）的情况。
+// 返回 false 表示唤回后仍不健康，调用方据此退避，避免与 Shell 高频拉锯。
+pub fn guard_tick(window: &tauri::WebviewWindow, raise_z: bool) -> bool {
     let Ok(hwnd) = window.hwnd() else { return true };
     let (visible, iconic) = unsafe {
         if !IsWindow(Some(hwnd)).as_bool() {
@@ -197,22 +208,31 @@ pub fn restore_if_hidden_by_win_d(window: &tauri::WebviewWindow) -> bool {
         }
         (IsWindowVisible(hwnd).as_bool(), IsIconic(hwnd).as_bool())
     };
-    if !should_restore(
-        EMBEDDED.load(Ordering::Relaxed),
-        USER_HIDDEN.load(Ordering::Relaxed),
-        visible,
-        iconic,
-    ) {
-        return true;
+    // 主人从任务栏/托盘把窗口叫回来了，守护重新接管
+    if USER_HIDDEN.load(Ordering::Relaxed) && visible && !iconic {
+        USER_HIDDEN.store(false, Ordering::Relaxed);
     }
-    // 正在按下鼠标时跳过：唤回会 SetWindowPos，打断点击/拖拽的按下抬起配对
-    if mouse_busy() {
+    let user_hidden = USER_HIDDEN.load(Ordering::Relaxed);
+    let need = should_restore(user_hidden, visible, iconic);
+    if !need {
+        GUARD_LOGGED.store(false, Ordering::Relaxed);
+    } else if !GUARD_LOGGED.swap(true, Ordering::Relaxed) {
+        eprintln!(
+            "[winembed] 守护唤回: visible={visible} iconic={iconic} embedded={} user_hidden={user_hidden}",
+            EMBEDDED.load(Ordering::Relaxed)
+        );
+    }
+    let embedded = EMBEDDED.load(Ordering::Relaxed);
+    // 未嵌入的普通窗口不做 Z 序提速，否则会一直盖住别的应用
+    let raise = raise_z && embedded;
+    if (!need && !raise) || user_hidden || mouse_busy() {
         return true;
     }
     unsafe {
-        let parent_dead = embed_parent()
-            .map(|p| !IsWindow(Some(p)).as_bool())
-            .unwrap_or(true);
+        let parent_dead = embedded
+            && embed_parent()
+                .map(|p| !IsWindow(Some(p)).as_bool())
+                .unwrap_or(true);
         if parent_dead
             && let Some(host) = find_host()
         {
@@ -222,13 +242,23 @@ pub fn restore_if_hidden_by_win_d(window: &tauri::WebviewWindow) -> bool {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | (WS_EX_TOOLWINDOW.0 as isize));
         }
         // 父被 Win+D 藏了，只 Show 子窗口是看不见的（IsWindowVisible 查整条父链）
-        if let Some(p) = embed_parent()
+        if embedded
+            && let Some(p) = embed_parent()
             && IsWindow(Some(p)).as_bool()
             && !IsWindowVisible(p).as_bool()
         {
             let _ = ShowWindow(p, SW_SHOWNA);
         }
-        bring_to_front(hwnd);
+        // 顶层窗口被 Win+D 最小化时 SW_SHOWNA 唤不回，必须先 SW_RESTORE
+        if iconic {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        if !visible {
+            let _ = ShowWindow(hwnd, SW_SHOWNA);
+        }
+        if raise || need {
+            bring_to_front(hwnd);
+        }
         IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool()
     }
 }
@@ -250,26 +280,26 @@ mod winembed_tests {
     use super::*;
 
     #[test]
-    fn restore_only_in_embedded_mode() {
-        assert!(!should_restore(false, false, false, false));
-        assert!(should_restore(true, false, false, false));
+    fn restore_covers_hidden_or_minimized() {
+        assert!(should_restore(false, false, false));
+        assert!(should_restore(false, true, true));
+    }
+
+    #[test]
+    fn restore_covers_hidden_and_minimized_combined() {
+        assert!(should_restore(false, false, true));
     }
 
     #[test]
     fn restore_never_fights_user_hidden() {
-        assert!(!should_restore(true, true, false, true));
-        assert!(!should_restore(true, true, true, false));
+        assert!(!should_restore(true, false, true));
+        assert!(!should_restore(true, false, false));
+        assert!(!should_restore(true, true, false));
     }
 
     #[test]
     fn restore_skips_healthy_window() {
-        assert!(!should_restore(true, false, true, false));
-    }
-
-    #[test]
-    fn restore_catches_hidden_or_minimized() {
-        assert!(should_restore(true, false, false, false));
-        assert!(should_restore(true, false, true, true));
+        assert!(!should_restore(false, true, false));
     }
 
     #[test]
