@@ -597,11 +597,41 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 
 const MAX_ENTITIES: usize = 200;
 
+// ---- 自动归类规则 ----------------------------------------------------------
+// 规则：dependabot 发起的 PR 一旦 close / merge，直接归入「已解决」，不占未读。
+// 关闭事件有两条来源：仓库级 poll_closed 的 closed_pr、单条监听的 state 变更
+// （title 含「→ closed」），classify 都给出 state = "closed"；GitHub 里 merge
+// 同样表现为 closed，故一条判定即可覆盖 close 与 merge。
+// 规则按「批次」生效：只有本批次真出现关闭事件时才置 done，之后用户手动改的
+// 状态不会被后续轮询反复覆盖。
+fn is_dependabot_author(author: &str) -> bool {
+    let a = author.trim().to_lowercase();
+    matches!(
+        a.as_str(),
+        "dependabot"
+            | "dependabot[bot]"
+            | "dependabot-preview"
+            | "dependabot-preview[bot]"
+            | "dependabot-bot"
+    )
+}
+
+fn auto_done_on_close(ev: &github::Event, state: &str) -> bool {
+    state == "closed"
+        && (ev.url.contains("/pull/") || ev.kind == "closed_pr")
+        && is_dependabot_author(&ev.author)
+}
+
 // 把变化事件 upsert 进实体表：同一 repo+number 聚合为一卡，updated_at 取最新；
 // 有新动态（时间更新或状态/类型变化）则 status 重置为未读。同时累计 stats。
 fn record_entities(cfg: &mut Config, events: &[github::Event]) {
+    // 本批次触发自动规则的实体；循环结束后统一应用，避免同批次后续事件把 done 冲掉
+    let mut auto_done: Vec<(String, Option<u64>)> = Vec::new();
     for ev in events {
         let (kind, last_kind, state) = classify(ev);
+        if auto_done_on_close(ev, &state) {
+            auto_done.push((ev.repo.clone(), ev.number));
+        }
         if let Some(e) = cfg.entities.iter_mut().find(|e| {
             e.repo.eq_ignore_ascii_case(&ev.repo) && e.number == ev.number
         }) {
@@ -641,6 +671,16 @@ fn record_entities(cfg: &mut Config, events: &[github::Event]) {
         bump(&mut cfg.stats, ev.repo.clone());
         if let Some(n) = ev.number {
             bump(&mut cfg.stats, format!("{}#{n}", ev.repo));
+        }
+    }
+    // 自动规则最后统一应用：本批次里即使还夹着评论等事件把 status 重置成 unread，
+    // 也以「已解决」为准。
+    for e in cfg.entities.iter_mut() {
+        if auto_done
+            .iter()
+            .any(|(r, n)| e.repo.eq_ignore_ascii_case(r) && *n == e.number)
+        {
+            e.status = "done".into();
         }
     }
     let len = cfg.entities.len();
@@ -1253,5 +1293,121 @@ mod qq_tests {
             !text.contains("以及另外"),
             "不应再有折叠提示：{text}"
         );
+    }
+}
+
+#[cfg(test)]
+mod auto_done_tests {
+    use super::*;
+
+    // fixture 一律通用示例：octocat/hello-world、#123、示例标题
+    fn ev(kind: &str, author: &str, path: &str, title: &str) -> github::Event {
+        github::Event {
+            kind: kind.into(),
+            repo: "octocat/hello-world".into(),
+            number: Some(123),
+            title: title.into(),
+            url: format!("https://github.com/octocat/hello-world/{path}"),
+            created_at: "2026-11-07T00:00:00+08:00".into(),
+            author: author.into(),
+            assignees: Vec::new(),
+        }
+    }
+
+    fn closed_pr(author: &str) -> github::Event {
+        ev(
+            "closed_pr",
+            author,
+            "pull/123",
+            "chore(deps): bump example from 1.0 to 1.1",
+        )
+    }
+
+    #[test]
+    fn recognizes_dependabot_bot_accounts_only() {
+        for a in [
+            "dependabot[bot]",
+            "DEPENDABOT[BOT]",
+            " dependabot[bot] ",
+            "dependabot",
+            "dependabot-preview[bot]",
+            "dependabot-bot",
+        ] {
+            assert!(is_dependabot_author(a), "{a} 应识别为 dependabot");
+        }
+        for a in ["octocat", "dependabot-fan", "my-dependabot", "dependabotish", ""] {
+            assert!(!is_dependabot_author(a), "{a} 不该误判为 dependabot");
+        }
+    }
+
+    #[test]
+    fn rule_fires_only_for_closed_pr_by_dependabot() {
+        assert!(!auto_done_on_close(
+            &ev("pr", "dependabot[bot]", "pull/123", "示例标题"),
+            "open"
+        ));
+        assert!(!auto_done_on_close(
+            &ev("closed_pr", "octocat", "pull/123", "示例标题"),
+            "closed"
+        ));
+        assert!(!auto_done_on_close(
+            &ev("closed_issue", "dependabot[bot]", "issues/123", "示例标题"),
+            "closed"
+        ));
+        assert!(auto_done_on_close(&closed_pr("dependabot[bot]"), "closed"));
+    }
+
+    #[test]
+    fn closed_dependabot_pr_lands_in_done() {
+        let mut cfg = Config::default();
+        record_entities(&mut cfg, &[closed_pr("dependabot[bot]")]);
+        assert_eq!(cfg.entities.len(), 1);
+        assert_eq!(cfg.entities[0].state, "closed");
+        assert_eq!(cfg.entities[0].status, "done");
+    }
+
+    #[test]
+    fn state_change_to_closed_also_lands_in_done() {
+        // 单条监听走 state 事件，且实体可能已被主人手动标成处理中
+        let mut cfg = Config::default();
+        record_entities(&mut cfg, &[ev("pr", "dependabot[bot]", "pull/123", "示例标题")]);
+        cfg.entities[0].status = "in_progress".into();
+        let mut state_ev = ev(
+            "state",
+            "dependabot[bot]",
+            "pull/123",
+            "「示例标题」状态 open → closed",
+        );
+        state_ev.created_at = "2026-11-07T00:05:00+08:00".into();
+        record_entities(&mut cfg, &[state_ev]);
+        assert_eq!(cfg.entities.len(), 1);
+        assert_eq!(cfg.entities[0].state, "closed");
+        assert_eq!(cfg.entities[0].status, "done");
+    }
+
+    #[test]
+    fn other_authors_closed_pr_stays_unread() {
+        let mut cfg = Config::default();
+        record_entities(&mut cfg, &[closed_pr("octocat")]);
+        assert_eq!(cfg.entities[0].status, "unread");
+    }
+
+    #[test]
+    fn dependabot_issue_close_is_not_affected() {
+        let mut cfg = Config::default();
+        record_entities(
+            &mut cfg,
+            &[ev("closed_issue", "dependabot[bot]", "issues/123", "示例标题")],
+        );
+        assert_eq!(cfg.entities[0].status, "unread");
+    }
+
+    #[test]
+    fn comment_in_same_batch_cannot_undo_auto_done() {
+        let mut cfg = Config::default();
+        let mut comment = ev("comment", "dependabot[bot]", "pull/123", "示例评论");
+        comment.created_at = "2026-11-07T00:06:00+08:00".into();
+        record_entities(&mut cfg, &[closed_pr("dependabot[bot]"), comment]);
+        assert_eq!(cfg.entities[0].status, "done");
     }
 }
