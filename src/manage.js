@@ -570,7 +570,11 @@ function updateTokenState() {
   document.getElementById("input-qq-notify").checked = config.qqNotify === true;
   document.getElementById("input-qq-port").value = config.qqRelayPort || "";
   document.getElementById("input-qq-appid").value = config.qqAppId || "";
-  document.getElementById("input-qq-secret").value = config.qqAppSecret || "";
+  const qqSecretInput = document.getElementById("input-qq-secret");
+  qqSecretInput.value = ""; // 密钥不回显，仅用占位提示是否已存
+  qqSecretInput.placeholder = config.qqAppSecret
+    ? "已存凭据管理器，输入新值可覆盖"
+    : "无默认值，必填";
   document.getElementById("input-qq-openid").value = config.qqOpenid || "";
   document.getElementById("input-qq-autoconfig").checked = config.qqAutoconfig === true;
   updateQqNotifyVisibility();
@@ -633,12 +637,19 @@ document.getElementById("input-qq-notify").addEventListener("change", async (e) 
 async function saveQqSettings() {
   const portEl = document.getElementById("input-qq-port");
   const port = parseInt(portEl.value, 10);
-  config = await invoke("set_qq_settings", {
-    port: Number.isInteger(port) && port > 0 && port <= 65535 ? port : null,
-    appId: document.getElementById("input-qq-appid").value.trim() || null,
-    appSecret: document.getElementById("input-qq-secret").value.trim() || null,
-    openid: document.getElementById("input-qq-openid").value.trim() || null,
-  });
+  try {
+    config = await invoke("set_qq_settings", {
+      port: Number.isInteger(port) && port > 0 && port <= 65535 ? port : null,
+      appId: document.getElementById("input-qq-appid").value.trim() || null,
+      // 留空 = 不改已存的密钥；填值才写凭据管理器覆盖
+      appSecret: document.getElementById("input-qq-secret").value.trim() || null,
+      openid: document.getElementById("input-qq-openid").value.trim() || null,
+    });
+  } catch (err) {
+    // 凭据写入失败时整包设置未落盘，回滚输入框并提示重试
+    alert("保存 QQ 设置失败：" + err);
+  }
+  updateTokenState();
 }
 
 ["input-qq-port", "input-qq-appid", "input-qq-secret", "input-qq-openid"].forEach((id) => {

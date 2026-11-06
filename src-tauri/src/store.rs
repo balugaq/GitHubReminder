@@ -114,6 +114,8 @@ pub struct Config {
     pub qq_relay_port: Option<u16>,
     #[serde(default)]
     pub qq_app_id: Option<String>,
+    // 与 token 一样：凭据管理器是唯一持久化位置，save 落盘前会剔除，
+    // 仅 API 响应与内存中可见；旧 config.json 里的明文在启动时一次性迁移。
     #[serde(default)]
     pub qq_app_secret: Option<String>,
     #[serde(default)]
@@ -162,9 +164,10 @@ pub fn save(path: &PathBuf, cfg: &Config) {
     if let Some(dir) = path.parent() {
         let _ = fs::create_dir_all(dir);
     }
-    // token 不落盘（存 Windows 凭据管理器），剔除后再序列化
+    // 密钥类字段不落盘（存 Windows 凭据管理器），剔除后再序列化
     let mut disk = cfg.clone();
     disk.token = None;
+    disk.qq_app_secret = None;
     let json = match serde_json::to_string_pretty(&disk) {
         Ok(j) => j,
         Err(e) => {
@@ -186,16 +189,17 @@ pub fn save(path: &PathBuf, cfg: &Config) {
 }
 
 const CRED_SERVICE: &str = "GitHubReminder";
-const CRED_USER: &str = "pat";
+const CRED_USER_PAT: &str = "pat";
+const CRED_USER_QQ_SECRET: &str = "qq_app_secret";
 
-pub fn load_token() -> Option<String> {
-    let entry = keyring::Entry::new(CRED_SERVICE, CRED_USER).ok()?;
+fn load_credential(user: &str) -> Option<String> {
+    let entry = keyring::Entry::new(CRED_SERVICE, user).ok()?;
     entry.get_password().ok().filter(|s| !s.is_empty())
 }
 
-pub fn save_token(token: Option<&str>) -> Result<(), String> {
-    let entry = keyring::Entry::new(CRED_SERVICE, CRED_USER).map_err(|e| e.to_string())?;
-    match token {
+fn save_credential(user: &str, value: Option<&str>) -> Result<(), String> {
+    let entry = keyring::Entry::new(CRED_SERVICE, user).map_err(|e| e.to_string())?;
+    match value {
         Some(s) => entry.set_password(s).map_err(|e| e.to_string()),
         None => match entry.delete_credential() {
             // 本来就没存过也算删除成功
@@ -203,6 +207,22 @@ pub fn save_token(token: Option<&str>) -> Result<(), String> {
             Err(e) => Err(e.to_string()),
         },
     }
+}
+
+pub fn load_token() -> Option<String> {
+    load_credential(CRED_USER_PAT)
+}
+
+pub fn save_token(token: Option<&str>) -> Result<(), String> {
+    save_credential(CRED_USER_PAT, token)
+}
+
+pub fn load_qq_app_secret() -> Option<String> {
+    load_credential(CRED_USER_QQ_SECRET)
+}
+
+pub fn save_qq_app_secret(secret: Option<&str>) -> Result<(), String> {
+    save_credential(CRED_USER_QQ_SECRET, secret)
 }
 
 #[cfg(test)]
@@ -237,6 +257,36 @@ mod tests {
         assert!(
             !dir.join("config.json.tmp").exists(),
             "临时文件不应残留"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_strips_credentials_from_disk() {
+        let dir = std::env::temp_dir().join(format!("ghr-cred-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("config.json");
+
+        let cfg = Config {
+            token: Some("pat-example-value".into()),
+            qq_app_secret: Some("qq-example-secret".into()),
+            ..Config::default()
+        };
+        save(&path, &cfg);
+
+        let raw = fs::read_to_string(&path).expect("配置应可读");
+        assert!(!raw.contains("pat-example-value"), "PAT 不应落盘");
+        assert!(
+            !raw.contains("qq-example-secret"),
+            "QQ AppSecret 不应落盘"
+        );
+        let back: Config = serde_json::from_str(&raw).expect("落盘内容应仍是合法 JSON");
+        assert!(back.token.is_none(), "读回的 PAT 应为空");
+        assert!(back.qq_app_secret.is_none(), "读回的 QQ AppSecret 应为空");
+        assert_eq!(
+            cfg.qq_app_secret.as_deref(),
+            Some("qq-example-secret"),
+            "内存里的值不应被改动"
         );
         let _ = fs::remove_dir_all(&dir);
     }

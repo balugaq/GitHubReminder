@@ -46,7 +46,7 @@ src/
 src-tauri/src/
   main.rs             二进制入口
   lib.rs              AppState、轮询协程、全部 tauri 命令、托盘、Win+D 守护、窗口位置记忆
-  store.rs            Config/Watch/Entity 数据模型 + config.json 读写 + PAT 凭据管理器
+  store.rs            Config/Watch/Entity 数据模型 + config.json 读写 + 凭据管理器（PAT / QQ AppSecret）
   github.rs           GitHub API 客户端与轮询（仓库级 + 单条颗粒度 + 实体查重兜底）
   winembed.rs         桌面层嵌入 / 解除嵌入 / 守护唤回
   qqrelay.rs          内置 QQ 中转服务
@@ -59,7 +59,9 @@ todo.md                待办与里程碑进度
 ## 数据位置
 
 - 配置：`%APPDATA%\com.githubreminder.app\config.json` —— 代理、通知开关、轮询间隔、监听项、五张游标表、通知实体（上限 200）、统计、窗口矩形
-- **GitHub PAT 不在 config.json**，走 Windows 凭据管理器（服务名 `GitHubReminder` / 账户 `pat`），`store::save` 落盘前剔除
+- **密钥不在 config.json**：GitHub PAT 与 QQ 机器人 AppSecret 都走 Windows 凭据管理器（服务名 `GitHubReminder`，账户分别 `pat` / `qq_app_secret`），`store::save` 落盘前剔除两项
+- 旧版 config.json 里残留的 AppSecret 明文在启动时一次性迁入凭据管理器并剔除；写失败时本次仅内存保留、不删明文
+- 设置页不回显密钥，只按是否已存显示占位提示；输入框留空 = 不改已存密钥，填新值才覆盖
 - 通知状态 / 钉住：后端 `entities[].status` / `pinned`（旧的 localStorage `ghr.read` 已废弃）
 - 外观（颜色 / 透明度 / 置顶）：localStorage `ghr.settings`
 
@@ -97,6 +99,5 @@ todo.md                待办与里程碑进度
 
 - Win+D 守护与贴桌面后的鼠标交互已于 2026-11-07 由主人实测确认修复（宿主 WorkerW + 200ms guard_tick + 1s raise_z）；异常时日志仍会打印 `[winembed] 守护唤回: visible=… iconic=… embedded=… user_hidden=…`，据此可一次定位卡在哪一环
 - 置顶模式（未嵌入）的免疫与「手动最小化」边界靠 `USER_HIDDEN` 标记区分，同样待实测
-- QQ 机器人 AppSecret 仍明文存 config.json（待迁移 Windows 凭据管理器）
 - 搜索「涉及的人」不含评论者（采集层未解析 Comment.user）；旧存档里的历史卡片缺 author / people，需等该卡片有新事件才补全
 - 主界面批量选择通知 + 标记状态 + 撤销 toast（todo 未实现）

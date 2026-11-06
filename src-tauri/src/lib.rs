@@ -284,16 +284,24 @@ fn set_qq_settings(
     app_id: Option<String>,
     app_secret: Option<String>,
     openid: Option<String>,
-) -> Config {
+) -> Result<Config, String> {
     let trim = |s: Option<String>| s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    // AppSecret 存凭据管理器：留空 = 不改已存的密钥，填了新值才覆盖。
+    // 写失败时整包设置不落盘，避免前端显示已保存但实际没生效。
+    let new_secret = trim(app_secret);
+    if let Some(s) = new_secret.as_deref() {
+        store::save_qq_app_secret(Some(s))?;
+    }
     state.with_config(|cfg| {
         cfg.qq_relay_port = port;
         cfg.qq_app_id = trim(app_id);
-        cfg.qq_app_secret = trim(app_secret);
+        if let Some(s) = new_secret.clone() {
+            cfg.qq_app_secret = Some(s);
+        }
         cfg.qq_openid = trim(openid);
     });
     restart_relay(&state);
-    state.config.lock().unwrap().clone()
+    Ok(state.config.lock().unwrap().clone())
 }
 
 fn relay_cfg_of(cfg: &Config) -> Option<Arc<qqrelay::RelayCfg>> {
@@ -1073,6 +1081,24 @@ pub fn run() {
             let mut cfg = store::load(&path);
             // token 唯一来源是凭据管理器；不迁移 config.json 里的旧明文（主人明确不要）
             cfg.token = store::load_token();
+            // QQ AppSecret 同样改存凭据管理器：旧 config.json 里的明文一次性迁入并剔除，
+            // 避免升级后内置中转因缺密钥静默不启动。写失败时本次仅内存保留、不删明文。
+            let mut stored_secret = store::load_qq_app_secret();
+            if let Some(plain) = cfg.qq_app_secret.clone() {
+                if stored_secret.is_none() {
+                    match store::save_qq_app_secret(Some(&plain)) {
+                        Ok(()) => stored_secret = Some(plain),
+                        Err(e) => eprintln!("[init] QQ AppSecret 迁移失败，本次仅内存保留: {e}"),
+                    }
+                }
+                if stored_secret.is_some() {
+                    store::save(&path, &cfg); // save 落盘前会剔除明文
+                    println!("[init] QQ AppSecret 已存凭据管理器，config.json 明文已剔除");
+                }
+            }
+            if let Some(s) = stored_secret {
+                cfg.qq_app_secret = Some(s);
+            }
             if first_run {
                 cfg.watches.push(Watch {
                     id: new_watch_id(),
