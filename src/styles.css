@@ -3,6 +3,12 @@
   --frame-alpha: 0.7;
   --text: #ffffff;
   --radius: 14px;
+  /* 滚动条配色：全部从自定义背景色派生，替换系统默认的灰白风格 */
+  --scroll-track: rgba(0, 0, 0, 0.18);
+  --scroll-thumb: rgba(var(--frame-color), 0.92);
+  --scroll-thumb-hover: rgb(var(--frame-color));
+  --scroll-thumb-edge: rgba(255, 255, 255, 0.45);
+  --scroll-thumb-edge-hover: rgba(255, 255, 255, 0.85);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -439,9 +445,42 @@ button { font-family: inherit; }
 .error-text { color: #ffb0b0; font-size: 12px; margin-bottom: 10px; }
 .btn-row { display: flex; align-items: center; gap: 14px; }
 
-/* 滚动条 */
-#content::-webkit-scrollbar { width: 6px; }
-#content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
-/* 事件列表才是实际滚动区，给它同款细滚动条，避免通知多时冒出一条粗系统滚动条 */
-#event-feed::-webkit-scrollbar { width: 6px; }
-#event-feed::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
+/* ---- 滚动条：跟随用户自定义的 ARGB 背景色，完全替换系统默认风格 ----
+   滑块用 --frame-color 实色 + 白色描边（半透明彩色底上才勾得出轮廓），
+   轨道压暗、去掉上下箭头与角落方块；#stats-list 原先漏了，会冒系统粗条，
+   这里三个滚动容器一次统一覆盖。 */
+#content::-webkit-scrollbar,
+#event-feed::-webkit-scrollbar,
+#stats-list::-webkit-scrollbar { width: 6px; height: 6px; }
+
+#content::-webkit-scrollbar-track,
+#event-feed::-webkit-scrollbar-track,
+#stats-list::-webkit-scrollbar-track {
+  background: var(--scroll-track);
+  border-radius: 3px;
+}
+
+#content::-webkit-scrollbar-thumb,
+#event-feed::-webkit-scrollbar-thumb,
+#stats-list::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 1px solid var(--scroll-thumb-edge);
+  border-radius: 3px;
+  /* 极浅的自定义色下白描边会跟背景融掉，这圈淡暗沿保证滑块始终可辨 */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+
+#content::-webkit-scrollbar-thumb:hover,
+#event-feed::-webkit-scrollbar-thumb:hover,
+#stats-list::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  border-color: var(--scroll-thumb-edge-hover);
+}
+
+#content::-webkit-scrollbar-button,
+#event-feed::-webkit-scrollbar-button,
+#stats-list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+
+#content::-webkit-scrollbar-corner,
+#event-feed::-webkit-scrollbar-corner,
+#stats-list::-webkit-scrollbar-corner { background: transparent; }

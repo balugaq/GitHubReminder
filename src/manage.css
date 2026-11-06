@@ -304,11 +304,44 @@
 #tab-settings .hint { color: var(--dim); }
 #tab-settings .form-row label { color: #e8eaf0; font-size: 13px; font-weight: 600; }
 
-/* 滚动条 */
-#group-nav::-webkit-scrollbar, #manage-list::-webkit-scrollbar, .tab-panel::-webkit-scrollbar { width: 6px; }
+/* ---- 滚动条：深色玻璃主题，用 --accent 派生，替换系统默认风格 ----
+   连带覆盖浏览弹窗的 #picker-list（原先漏了，会冒系统粗条）。 */
+#group-nav::-webkit-scrollbar,
+#manage-list::-webkit-scrollbar,
+.tab-panel::-webkit-scrollbar,
+#picker-list::-webkit-scrollbar { width: 6px; height: 6px; }
+
+#group-nav::-webkit-scrollbar-track,
+#manage-list::-webkit-scrollbar-track,
+.tab-panel::-webkit-scrollbar-track,
+#picker-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 3px;
+}
+
 #group-nav::-webkit-scrollbar-thumb,
 #manage-list::-webkit-scrollbar-thumb,
-.tab-panel::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 3px; }
+.tab-panel::-webkit-scrollbar-thumb,
+#picker-list::-webkit-scrollbar-thumb {
+  background: var(--accent-glow);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 3px;
+}
+
+#group-nav::-webkit-scrollbar-thumb:hover,
+#manage-list::-webkit-scrollbar-thumb:hover,
+.tab-panel::-webkit-scrollbar-thumb:hover,
+#picker-list::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+#group-nav::-webkit-scrollbar-button,
+#manage-list::-webkit-scrollbar-button,
+.tab-panel::-webkit-scrollbar-button,
+#picker-list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+
+#group-nav::-webkit-scrollbar-corner,
+#manage-list::-webkit-scrollbar-corner,
+.tab-panel::-webkit-scrollbar-corner,
+#picker-list::-webkit-scrollbar-corner { background: transparent; }
 
 /* ---- 浏览选择弹窗：列出仓库 Issue/PR 供勾选 ---- */
 #picker-overlay {
