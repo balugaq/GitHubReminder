@@ -153,6 +153,49 @@ button { font-family: inherit; }
 .toggle-row input { accent-color: rgba(255,255,255,0.9); width: 16px; height: 16px; }
 .hint-inline { font-size: 11px; opacity: 0.7; }
 
+/* ---- 搜索栏 ---- */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+.search-icon { font-size: 11px; opacity: 0.7; line-height: 1; flex-shrink: 0; }
+#search-input {
+  flex: 1;
+  min-width: 0; /* 240px 窄窗口下允许收缩，不被 placeholder 撑破 */
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11.5px;
+  outline: none;
+  user-select: text; /* body 上是 none，输入框要能选中文字 */
+}
+#search-input::placeholder { color: rgba(255, 255, 255, 0.6); }
+#search-input:focus {
+  border-color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.2);
+}
+.search-clear {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.search-clear:hover { background: rgba(255, 255, 255, 0.3); }
+
 /* ---- 监听列表页 ---- */
 #view-list { gap: 8px; }
 #event-feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; }

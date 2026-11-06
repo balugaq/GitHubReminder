@@ -30,6 +30,12 @@
         <section id="view-list" class="view hidden">
           <!-- 置顶区：右键钉住的通知最多 3 张，横排在最上面 -->
           <div id="pinned-zone"></div>
+          <!-- 搜索：标题/作者；@//用户名/ 限定「涉及这个人」，其后接关键词 -->
+          <div class="search-bar">
+            <span class="search-icon">🔍</span>
+            <input id="search-input" type="text" placeholder="搜索标题 / 作者 · @//用户名/ 限定涉及的人" autocomplete="off" spellcheck="false" />
+            <button id="btn-search-clear" class="search-clear hidden" title="清空搜索">×</button>
+          </div>
           <!-- 分类：未读用红点角标，其余计数与文字同高灰色显示 -->
           <nav id="status-tabs">
             <button class="status-tab active" data-status="all"><span class="tab-label"><span class="tab-emoji">📋</span>全部</span><span class="tab-count">0</span></button>
@@ -59,6 +65,7 @@
       <!-- 轻提示：置顶已满 / 复制结果等 -->
       <div id="float-msg" class="hidden"></div>
     </div>
+    <script src="search.js"></script>
     <script src="main.js"></script>
   </body>
 </html>

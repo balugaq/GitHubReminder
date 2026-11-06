@@ -143,6 +143,8 @@ function buildCard(ev) {
   card.querySelector(".event-sub").textContent =
     (LAST_EVENT_LABEL[ev.lastEventKind] || ev.lastEventKind || "") +
     (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
+  // 作者可搜但卡片布局里不展示，hover 给个轻量提示，便于核对搜索命中原因
+  if (ev.author) card.title = `作者: ${ev.author}`;
   bindCard(card, ev);
   return card;
 }
@@ -195,11 +197,22 @@ function renderTabs() {
   }
 }
 
-// 后端已按 updatedAt 降序，这里只按分类过滤；渲染和续展共用同一份列表
+// 搜索纯逻辑在 search.js（classic script，挂 window.GhrSearch）。
+// 查询存成字符串状态而非读 DOM：renderFeed / 触底续展 / tab 切换共用同一份，不会漂移。
+const SEARCH = window.GhrSearch;
+let searchQuery = "";
+
+function searchActive() {
+  return SEARCH.parseQuery(searchQuery).active;
+}
+
+// 后端已按 updatedAt 降序；分类 tab 与搜索条件叠加，两者都作用于全量 allEvents
+// （不受 100 条分页限制），渲染和续展共用同一份列表。
 function filteredEvents() {
-  return activeStatus === "all"
+  const base = activeStatus === "all"
     ? allEvents
     : allEvents.filter((ev) => (ev.status || "unread") === activeStatus);
+  return SEARCH.searchEvents(base, searchQuery);
 }
 
 // 列表末尾的哨兵进入视口就自动追加下一批。每次 renderFeed 都会重建哨兵，
@@ -243,17 +256,22 @@ function renderFeed() {
     p.textContent = text;
     feed.appendChild(p);
   };
+  const active = searchActive();
   if (allEvents.length === 0) {
     showHint(`暂无新事件。轮询每 ${config.pollInterval || 60} 秒一次，有新动态会自动浮现。`);
     return;
   }
   const list = filteredEvents();
   if (list.length === 0) {
-    showHint(
-      activeStatus === "all"
-        ? "暂无新事件。轮询每 " + (config.pollInterval || 60) + " 秒一次，有新动态会自动浮现。"
-        : "该分类下还没有通知"
-    );
+    if (active) {
+      showHint(`没有匹配「${searchQuery.trim()}」的通知`);
+    } else {
+      showHint(
+        activeStatus === "all"
+          ? "暂无新事件。轮询每 " + (config.pollInterval || 60) + " 秒一次，有新动态会自动浮现。"
+          : "该分类下还没有通知"
+      );
+    }
     return;
   }
   const shown = list.slice(0, feedLimit);
@@ -264,7 +282,7 @@ function renderFeed() {
     const hint = document.createElement("p");
     hint.id = "feed-more-hint";
     hint.className = "feed-more-hint";
-    hint.textContent = `向下滚动继续加载（还有 ${rest} 条）`;
+    hint.textContent = `${active ? `匹配 ${list.length} 条 · ` : ""}向下滚动继续加载（还有 ${rest} 条）`;
     feed.appendChild(hint);
   }
   feed.scrollTop = scrollTop;
@@ -476,6 +494,32 @@ document.getElementById("btn-guide-start").addEventListener("click", () => {
 document.getElementById("btn-stats").addEventListener("click", () => openStats());
 document.getElementById("btn-stats-back").addEventListener("click", () => goDefaultView());
 
+// ---- 搜索框 ----
+// 绑定放在顶层、不塞进 init：init 里有两次 await，等它跑完再绑会让启动瞬间的输入失效
+const searchInput = document.getElementById("search-input");
+const btnSearchClear = document.getElementById("btn-search-clear");
+
+function clearSearch() {
+  searchInput.value = "";
+  searchQuery = "";
+  btnSearchClear.classList.add("hidden");
+  feedLimit = INITIAL_LIMIT;
+  renderFeed();
+  document.getElementById("event-feed").scrollTop = 0;
+}
+
+searchInput.addEventListener("input", () => {
+  searchQuery = searchInput.value;
+  btnSearchClear.classList.toggle("hidden", !searchQuery);
+  feedLimit = INITIAL_LIMIT; // 换查询重新从 100 条起，别沿用上一批的分页位置
+  renderFeed();
+  document.getElementById("event-feed").scrollTop = 0;
+});
+btnSearchClear.addEventListener("click", () => {
+  clearSearch();
+  searchInput.focus();
+});
+
 // 🔄 立即刷新
 document.getElementById("btn-refresh").addEventListener("click", async () => {
   const btn = document.getElementById("btn-refresh");
@@ -542,7 +586,10 @@ function applyWindowMode() {
     if (!e.target.closest(".event-card")) closeContextMenu();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeContextMenu();
+    if (e.key !== "Escape") return;
+    closeContextMenu();
+    // 只有搜索框聚焦时 Esc 才清空，没聚焦时只收菜单、不动已有查询
+    if (document.activeElement === searchInput && searchInput.value) clearSearch();
   });
   window.addEventListener("blur", closeContextMenu);
   document.getElementById("event-feed").addEventListener("scroll", closeContextMenu);

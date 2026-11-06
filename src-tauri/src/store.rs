@@ -66,6 +66,13 @@ pub struct Entity {
     pub updated_at: String,      // 最近变化时间 (ISO 8601)，排序键
     pub status: String,          // "unread" | "read" | "in_progress" | "done"（默认 unread）
     pub pinned: bool,            // 用户显式钉住（默认 false，最多 3 个）
+    // 卡片发起者（issue/pr 作者、release 发布者）：实体首次写入后不再被后续事件覆盖，
+    // 供主界面搜索「author」用。旧存档没有该字段，serde 默认空串。
+    pub author: String,
+    // 「涉及」过这张卡的人：历次事件的 author + assignees，统一小写、去重、累积。
+    // 供搜索语法 @//用户名/ 判定「与谁有关」，比 author 更宽（含指派人）。
+    // 评论事件的 author 仍是 issue/pr 发起者（见 github.rs::poll_item），故不含评论者。
+    pub people: Vec<String>,
 }
 
 // 主窗口位置与尺寸（物理像素），移动/拉伸时记录，下次启动恢复

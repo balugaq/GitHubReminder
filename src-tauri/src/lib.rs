@@ -597,6 +597,17 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 
 const MAX_ENTITIES: usize = 200;
 
+// 把某条事件里出现的人并进实体的 people（统一小写、去重）。GitHub login 大小写不敏感，
+// 统一小写既能避免 "Octocat"/"octocat" 重复，也让前端 @//用户名/ 直接做字符串比较。
+fn merge_people(target: &mut Vec<String>, ev: &github::Event) {
+    for p in std::iter::once(&ev.author).chain(ev.assignees.iter()) {
+        let name = p.trim().to_lowercase();
+        if !name.is_empty() && !target.contains(&name) {
+            target.push(name);
+        }
+    }
+}
+
 // ---- 自动归类规则 ----------------------------------------------------------
 // 规则：dependabot 发起的 PR 一旦 close / merge，直接归入「已解决」，不占未读。
 // 关闭事件有两条来源：仓库级 poll_closed 的 closed_pr、单条监听的 state 变更
@@ -635,6 +646,12 @@ fn record_entities(cfg: &mut Config, events: &[github::Event]) {
         if let Some(e) = cfg.entities.iter_mut().find(|e| {
             e.repo.eq_ignore_ascii_case(&ev.repo) && e.number == ev.number
         }) {
+            // 旧存档没有人物字段：后续有新事件时顺手补全。卡片作者取首个非空值，
+            // 不被评论等后续事件覆盖；「涉及的人」则持续累积。
+            if e.author.is_empty() && !ev.author.is_empty() {
+                e.author = ev.author.clone();
+            }
+            merge_people(&mut e.people, ev);
             // 评论不改 state，不视为变化；其余按时间/状态/类型判断
             let changed = ev.created_at > e.updated_at
                 || e.last_event_kind != last_kind
@@ -652,6 +669,8 @@ fn record_entities(cfg: &mut Config, events: &[github::Event]) {
                 e.status = "unread".into();
             }
         } else {
+            let mut people = Vec::new();
+            merge_people(&mut people, ev);
             cfg.entities.push(Entity {
                 kind,
                 repo: ev.repo.clone(),
@@ -663,6 +682,8 @@ fn record_entities(cfg: &mut Config, events: &[github::Event]) {
                 updated_at: ev.created_at.clone(),
                 status: "unread".into(),
                 pinned: false,
+                author: ev.author.clone(),
+                people,
             });
         }
         let bump = |m: &mut std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>, key: String| {
@@ -1409,5 +1430,61 @@ mod auto_done_tests {
         comment.created_at = "2026-11-07T00:06:00+08:00".into();
         record_entities(&mut cfg, &[closed_pr("dependabot[bot]"), comment]);
         assert_eq!(cfg.entities[0].status, "done");
+    }
+}
+
+#[cfg(test)]
+mod search_field_tests {
+    use super::*;
+
+    // fixture 一律通用示例：octocat / hubot / example.com / #123 / 示例标题
+    fn ev(author: &str, assignees: &[&str]) -> github::Event {
+        github::Event {
+            kind: "issue".into(),
+            repo: "octocat/hello-world".into(),
+            number: Some(123),
+            title: "示例标题".into(),
+            url: "https://example.com/octocat/hello-world/issues/123".into(),
+            created_at: "2026-11-07T00:00:00+08:00".into(),
+            author: author.into(),
+            assignees: assignees.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn new_entity_keeps_author_and_involved_people() {
+        let mut cfg = Config::default();
+        record_entities(&mut cfg, &[ev("Octocat", &["Hubot", "octocat"])]);
+        let e = &cfg.entities[0];
+        assert_eq!(e.author, "Octocat");
+        assert_eq!(e.people, vec!["octocat", "hubot"]); // 统一小写、去重
+    }
+
+    #[test]
+    fn later_events_keep_original_author_but_accumulate_people() {
+        let mut cfg = Config::default();
+        record_entities(&mut cfg, &[ev("octocat", &[])]);
+        let mut later = ev("hubot", &["alice"]);
+        later.created_at = "2026-11-08T00:00:00+08:00".into();
+        record_entities(&mut cfg, &[later]);
+        assert_eq!(cfg.entities.len(), 1);
+        assert_eq!(cfg.entities[0].author, "octocat", "卡片作者不该被后续事件覆盖");
+        assert_eq!(cfg.entities[0].people, vec!["octocat", "hubot", "alice"]);
+    }
+
+    #[test]
+    fn legacy_entity_without_people_is_backfilled_on_next_event() {
+        // 旧版存档没有 author / people，serde 的 default 必须给空值而不是整体解析失败
+        let json = r#"{"kind":"issue","repo":"octocat/hello-world","number":123,"title":"示例标题","url":"https://example.com/o/r/issues/123","state":"open","lastEventKind":"open","updatedAt":"2026-11-01T00:00:00Z","status":"read","pinned":false}"#;
+        let old: Entity = serde_json::from_str(json).expect("旧存档应能解析");
+        assert!(old.author.is_empty() && old.people.is_empty());
+        let mut cfg = Config::default();
+        cfg.entities.push(old);
+        let mut later = ev("octocat", &["hubot"]);
+        later.created_at = "2026-11-08T00:00:00+08:00".into();
+        record_entities(&mut cfg, &[later]);
+        assert_eq!(cfg.entities.len(), 1);
+        assert_eq!(cfg.entities[0].author, "octocat");
+        assert_eq!(cfg.entities[0].people, vec!["octocat", "hubot"]);
     }
 }
