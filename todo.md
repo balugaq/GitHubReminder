@@ -114,6 +114,8 @@
   - 逻辑内联在 main.js（十行级，抽单测收益低），验收走全量回归 + grep 静态核对。
   - 验收：`npm test` 26/26 通过、`node --check` 通过、cargo check + clippy --all-targets -D warnings 零代码警告、grep 确认 6 处落地。
   - 待主人实测：列表视图切到某分类 → 托盘退出/重启 → 是否直接落在该分类。
+- [x] **板视图拖拽不生效修复**（完成 2026-11-07 a21e5b2 @master直改）：根因是 Tauri v2 在 Windows 默认接管 WebView2 拖放通道（文件拖入监听），页面内 HTML5 DnD 事件不触发；tauri.conf.json 主窗口加 `"dragDropEnabled": false`（全仓无文件拖放依赖，无副作用）。待主人目视确认拖拽切分类实际手感。
+- [x] **记住窗口最大化状态（治「伪全屏」回归）**（完成 2026-11-07 b3aaf0a @master直改）：WindowRect 加 `maximized` 字段（serde default 兼容旧存档）；remember_window 最大化时跳过全屏矩形只翻标记（next_window_rect 纯函数 + 3 单测）；启动先恢复普通矩形再 maximize。cargo test --lib 39/39、clippy 过。待主人目视确认链路：最大化→托盘退出→重启应直接最大化，取消最大化应回到上次普通位置；嵌入模式下最大化表现一并看。
 
 ## 里程碑
 - [x] M1 骨架：透明窗口 / 引导页 / 设置页 / 0.5s 上浮动画
