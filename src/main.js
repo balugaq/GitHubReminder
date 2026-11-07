@@ -737,10 +737,26 @@ async function openStats() {
 // ---- 窗口控制 ----
 // 标记 + 最小化交给后端一次做完，守护不会把主人主动最小化当成 Win+D 藏窗弹回来
 document.getElementById("btn-min").addEventListener("click", () => invoke("user_minimize"));
-document.getElementById("btn-max").addEventListener("click", () => {
+document.getElementById("btn-close").addEventListener("click", () => getCurrentWindow().close());
+
+// 最大化/还原是两种状态，图标和提示要跟着换；resize 在最大化切换、拖动边缘时都会触发
+const MAX_GLYPH = "□";
+const RESTORE_GLYPH = "❐";
+const btnMax = document.getElementById("btn-max");
+function syncMaxButton() {
+  getCurrentWindow()
+    .isMaximized()
+    .then((maxed) => {
+      btnMax.textContent = maxed ? RESTORE_GLYPH : MAX_GLYPH;
+      btnMax.title = maxed ? "还原" : "最大化";
+    })
+    .catch(() => {});
+}
+btnMax.addEventListener("click", () => {
   getCurrentWindow().toggleMaximize().catch((err) => console.warn("切换最大化失败:", err));
 });
-document.getElementById("btn-close").addEventListener("click", () => getCurrentWindow().close());
+syncMaxButton();
+getCurrentWindow().onResized(() => syncMaxButton());
 
 // 设置/管理/添加入口：开（或唤起）独立管理窗口
 document.getElementById("btn-settings").addEventListener("click", () => {
