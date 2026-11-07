@@ -336,20 +336,25 @@ fn restart_relay(state: &AppState) {
 // 超长交给 qqrelay::split_text 按行分段（1900 字上限，链接不会被截断）
 // 格式（头部一行由 spawn_qq_push 拼上）：
 //   [GitHubReminder] 通知 · GitHub 动态
-//   PR #459 · owner/repo
+//   新 PR #459 · owner/repo
 //   [@me] [author] · 标题（评论统一显示「有新消息」）
 //   https://github.com/owner/repo/pull/459
 //
 // [@me] 仅当该事件的 assignee 列表里有本人（设置里填的 GitHub 用户名）时出现；
 // [author] 是提 issue / pr 的人。两者都没有时标题行保持纯标题。
+// 头一行带动作（新/已关闭/状态变更/新评论），主人 2026-11-07 要求补事件标注。
 fn event_kind_label(ev: &github::Event) -> &'static str {
     match ev.kind.as_str() {
-        "release" => "Release",
-        "pr" | "closed_pr" => "PR",
-        "issue" | "closed_issue" => "Issue",
-        // comment/state 按 URL 区分挂在 Issue 还是 PR 上
-        _ if ev.url.contains("/pull/") => "PR",
-        _ => "Issue",
+        "release" => "新 Release",
+        "pr" => "新 PR",
+        "closed_pr" => "已关闭 PR",
+        "issue" => "新 Issue",
+        "closed_issue" => "已关闭 Issue",
+        // state/comment 按 URL 区分挂在 Issue 还是 PR 上
+        "state" if ev.url.contains("/pull/") => "PR 状态变更",
+        "state" => "Issue 状态变更",
+        _ if ev.url.contains("/pull/") => "PR 新评论",
+        _ => "Issue 新评论",
     }
 }
 
@@ -1385,7 +1390,7 @@ mod qq_tests {
         );
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines[0], "[GitHubReminder] 通知 · GitHub 动态");
-        assert_eq!(lines[1], "PR #459 · octocat/hello-world");
+        assert_eq!(lines[1], "新 PR #459 · octocat/hello-world");
         assert_eq!(lines[2], "[@me] [octocat] · fix: 示例提交标题");
         assert_eq!(lines[3], "https://github.com/octocat/hello-world/pull/459");
     }
@@ -1412,7 +1417,7 @@ mod qq_tests {
         let events = vec![ev("comment", Some(461), "issues/461")];
         let text = qq_summary(&events, None);
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "Issue #461 · octocat/hello-world");
+        assert_eq!(lines[0], "Issue 新评论 #461 · octocat/hello-world");
         assert!(lines[1].ends_with("· 有新消息"), "评论标题统一「有新消息」：{}", lines[1]);
     }
 
@@ -1421,7 +1426,7 @@ mod qq_tests {
         let mut rel = ev("release", None, "releases/tag/v1");
         rel.title = "v1.0".into();
         let text = qq_summary(&[rel], None);
-        assert!(text.starts_with("Release · octocat/hello-world\n"));
+        assert!(text.starts_with("新 Release · octocat/hello-world\n"));
         assert!(text.contains("[octocat] · v1.0"), "发布者应显示在标题行：{text}");
     }
 
@@ -1433,7 +1438,7 @@ mod qq_tests {
         let text = qq_summary(&events, None);
         for n in 1..=12 {
             assert!(
-                text.contains(&format!("Issue #{n} · ")),
+                text.contains(&format!("新 Issue #{n} · ")),
                 "第 {n} 条不应被折叠掉"
             );
         }
@@ -1441,6 +1446,25 @@ mod qq_tests {
             !text.contains("以及另外"),
             "不应再有折叠提示：{text}"
         );
+    }
+
+    #[test]
+    fn qq_summary_head_line_marks_event_action() {
+        // 主人 2026-11-07 要求：头一行除类型外还要标事件动作
+        let cases: Vec<(&str, &str, &str)> = vec![
+            ("closed_pr", "pull/9", "已关闭 PR #9 · octocat/hello-world"),
+            ("closed_issue", "issues/9", "已关闭 Issue #9 · octocat/hello-world"),
+            ("state", "pull/9", "PR 状态变更 #9 · octocat/hello-world"),
+            ("state", "issues/9", "Issue 状态变更 #9 · octocat/hello-world"),
+            ("comment", "pull/9", "PR 新评论 #9 · octocat/hello-world"),
+        ];
+        for (kind, path, expected) in cases {
+            let text = qq_summary(&[ev(kind, Some(9), path)], None);
+            assert!(
+                text.lines().next() == Some(expected),
+                "kind={kind} 头一行应为「{expected}」：{text}"
+            );
+        }
     }
 }
 
