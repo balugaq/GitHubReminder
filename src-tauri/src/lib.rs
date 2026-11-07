@@ -483,6 +483,26 @@ fn rect_is_plausible(x: f64, y: f64, width: f64, height: f64, min_px: f64) -> bo
 }
 
 // 关闭隐藏前把节流计时清零再调一次，保证最终位置一定落盘
+// 最大化时全屏矩形不入库（否则下次启动恢复成铺满屏的伪全屏），只记住「上次是最大化」；
+// 没有历史矩形时什么都不存，启动按默认尺寸直接最大化
+fn next_window_rect(
+    prev: Option<store::WindowRect>,
+    measured: store::WindowRect,
+    maximized: bool,
+) -> Option<store::WindowRect> {
+    if maximized {
+        prev.map(|mut r| {
+            r.maximized = true;
+            r
+        })
+    } else {
+        Some(store::WindowRect {
+            maximized: false,
+            ..measured
+        })
+    }
+}
+
 fn remember_window(state: &AppState, window: &tauri::Window) {
     if window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true) {
         return;
@@ -491,21 +511,18 @@ fn remember_window(state: &AppState, window: &tauri::Window) {
         return;
     };
     let min_px = min_window_px(window);
-    if !rect_is_plausible(
-        pos.x as f64,
-        pos.y as f64,
-        size.width as f64,
-        size.height as f64,
-        min_px,
-    ) {
-        return;
-    }
+    let maxed = window.is_maximized().unwrap_or(false);
     let rect = store::WindowRect {
         x: pos.x as f64,
         y: pos.y as f64,
         width: size.width as f64,
         height: size.height as f64,
+        maximized: false,
     };
+    // 最大化时全屏矩形本来就不入库，离屏/过小过滤只对普通矩形有意义
+    if !maxed && !rect_is_plausible(rect.x, rect.y, rect.width, rect.height, min_px) {
+        return;
+    }
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -519,7 +536,7 @@ fn remember_window(state: &AppState, window: &tauri::Window) {
         due
     };
     let mut cfg = state.config.lock().unwrap();
-    cfg.window = Some(rect);
+    cfg.window = next_window_rect(cfg.window, rect, maxed);
     if due {
         store::save(&state.path, &cfg);
     }
@@ -1202,6 +1219,10 @@ pub fn run() {
                         store::save(&path, &cfg);
                     }
                 }
+                // 先恢复普通矩形再翻最大化，保证取消最大化后能回到上次的位置
+                if cfg.window.map(|r| r.maximized).unwrap_or(false) {
+                    let _ = w.maximize();
+                }
             }
             let state = Arc::new(AppState {
                 path,
@@ -1296,6 +1317,33 @@ mod window_tests {
     #[test]
     fn rejects_minimized_geometry() {
         assert!(!rect_is_plausible(-32000.0, -32000.0, 199.0, 34.0, 240.0));
+    }
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> store::WindowRect {
+        store::WindowRect { x, y, width: w, height: h, maximized: false }
+    }
+
+    #[test]
+    fn maximized_keeps_prev_rect_and_sets_flag() {
+        let prev = rect(100.0, 80.0, 480.0, 320.0);
+        let out = next_window_rect(Some(prev), rect(0.0, 0.0, 1920.0, 1080.0), true).unwrap();
+        assert_eq!(out.x, 100.0);
+        assert_eq!(out.width, 480.0);
+        assert!(out.maximized);
+    }
+
+    #[test]
+    fn maximized_without_prev_stores_nothing() {
+        assert!(next_window_rect(None, rect(0.0, 0.0, 1920.0, 1080.0), true).is_none());
+    }
+
+    #[test]
+    fn normal_rect_clears_flag() {
+        let mut prev = rect(100.0, 80.0, 480.0, 320.0);
+        prev.maximized = true;
+        let out = next_window_rect(Some(prev), rect(120.0, 90.0, 500.0, 340.0), false).unwrap();
+        assert!(!out.maximized);
+        assert_eq!(out.x, 120.0);
     }
 
     #[test]

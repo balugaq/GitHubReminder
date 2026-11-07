@@ -83,6 +83,9 @@ pub struct WindowRect {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    // 上次关闭/记录时是否处于最大化；旧存档无此字段，默认 false
+    #[serde(default)]
+    pub maximized: bool,
 }
 
 fn default_true() -> bool {
@@ -228,6 +231,18 @@ pub fn save_qq_app_secret(secret: Option<&str>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_rect_without_maximized_field_defaults_false() {
+        // 旧存档里没有 maximized 字段，反序列化必须按 false 走，不能报错
+        let rect: WindowRect =
+            serde_json::from_str(r#"{"x":10,"y":20,"width":480,"height":320}"#).unwrap();
+        assert!(!rect.maximized);
+        let rect: WindowRect =
+            serde_json::from_str(r#"{"x":10,"y":20,"width":480,"height":320,"maximized":true}"#)
+                .unwrap();
+        assert!(rect.maximized);
+    }
 
     #[test]
     fn save_overwrites_existing_file_on_windows() {
