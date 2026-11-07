@@ -91,6 +91,17 @@
   - set_token 改为 Result，凭据写入失败时报错给前端（manage.js alert 提示，原值不动）。
   - clippy -D warnings 零警告。待主人实测：添加 token 后状态变"已设置"，重启后轮询/通知正常。
 
+## 本轮任务（2026-11-07）
+依赖链（已发给主人确认）：`T1 最大化按钮` 独立；`T2 视图模式 + 板视图 + 拖拽 → T3 列表分类记忆`。
+三条共享 index.html / main.js / styles.css，故主人确认走**单 worktree 串行**（worktree/viewmode），逐条 commit。
+- [x] **T1 主界面右上角最大化按钮**（完成 2026-11-07 @worktree/viewmode）
+  - index.html 标题栏加 `#btn-max`（□），main.js 绑 `getCurrentWindow().toggleMaximize()`，capabilities/default.json 补 `core:window:allow-toggle-maximize`；按主人选择不改 Rust 逻辑。
+  - 验收：cargo check + clippy --all-targets -D warnings 零代码警告（stderr 的 os error 5 是共享 incremental 锁的环境警告），node --check 通过，grep 确认三处落地。
+  - 已知回归（主人明确「先不动」）：最大化触发 Resized → remember_window 把全屏矩形写进 config.window，下次启动会恢复成没有最大化标志的伪全屏。
+  - 待主人目视确认：按钮位置/图标；嵌入（WorkerW 子窗口）模式下 toggleMaximize 的实际表现。
+- [ ] **T2 设置增加视图模式（列表 / 板视图）+ 板视图拖拽切分类**（依赖：无；T3 依赖本项）
+- [ ] **T3 列表视图记忆程序关闭时所在分类，重启直接切回**（依赖：T2）
+
 ## 里程碑
 - [x] M1 骨架：透明窗口 / 引导页 / 设置页 / 0.5s 上浮动画
 - [x] 窗口模式：默认贴桌面（WorkerW）+ 置顶开关
