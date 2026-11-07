@@ -5,7 +5,8 @@
 //   "pr title"           → 标题或作者里同时含 pr / title（分词 AND，忽略大小写）
 //   "@octocat pr title"  → 先限定「涉及 octocat」的通知，再在其上按关键词筛
 //   "pr title @octocat"  → 同上，@用户名 可放在关键词任意位置
-//   "@//octocat/"        → 旧写法，保留兼容
+//
+// 只认词首独立的 @用户名；旧写法 @//用户名/ 已废弃，按普通文本处理。
 //
 // 「涉及」= 该卡片的发起者或指派人（后端 Entity.people 累积，统一小写）；
 // 普通关键词只匹配「标题 + author」，不含指派人——两者语义刻意区分，
@@ -13,16 +14,16 @@
 (function (root) {
   "use strict";
 
-  // 词首的 @用户名 才是「涉及某人」；@//用户名/ 是旧写法，仍要求结尾斜杠。
-  // 前后都卡空白/首尾，避免把 foo@example.com 之类的文本误判成人名。
-  var MENTION_RE = /(?:^|\s)@(?:\/\/([A-Za-z0-9][A-Za-z0-9-]*)\/|([A-Za-z0-9][A-Za-z0-9-]*))(?=\s|$)/g;
+  // 词首的 @用户名 才是「涉及某人」。前后都卡空白/首尾，
+  // 避免把 foo@example.com 之类的文本误判成人名。
+  var MENTION_RE = /(?:^|\s)@([A-Za-z0-9][A-Za-z0-9-]*)(?=\s|$)/g;
 
   function parseQuery(raw) {
     var text = String(raw == null ? "" : raw);
     var people = [];
     // 标记整体从关键词里摘掉，替换成空格，避免剩下的词粘在一起
-    var rest = text.replace(MENTION_RE, function (_, legacy, modern) {
-      var n = (legacy || modern).toLowerCase();
+    var rest = text.replace(MENTION_RE, function (_, name) {
+      var n = name.toLowerCase();
       if (people.indexOf(n) === -1) people.push(n);
       return " ";
     });

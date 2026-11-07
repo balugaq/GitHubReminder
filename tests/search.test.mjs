@@ -54,8 +54,8 @@ test("普通关键词多词是 AND，且只在标题+作者里搜", () => {
   assert.deepEqual(plain(S.searchEvents(list, "hubot")), []);
 });
 
-test("@//用户名/ 解析为人名，剩余文本作关键词", () => {
-  const q = S.parseQuery(" @//octocat/ pr title ");
+test("@用户名 解析为人名，剩余文本作关键词", () => {
+  const q = S.parseQuery(" @octocat pr title ");
   assert.deepEqual(plain(q.people), ["octocat"]);
   assert.deepEqual(plain(q.terms), ["pr", "title"]);
   assert.equal(q.active, true);
@@ -71,9 +71,9 @@ test("涉及的人包含指派人，人名大小写不敏感", () => {
       people: ["someone-else"],
     }),
   ];
-  assert.deepEqual(plain(S.searchEvents(list, "@//hubot/ pr title").map((e) => e.number)), [1]);
-  assert.deepEqual(plain(S.searchEvents(list, "@//OCTOCAT/ pr").map((e) => e.number)), [1]);
-  assert.deepEqual(plain(S.searchEvents(list, "@//nobody/ pr title")), []);
+  assert.deepEqual(plain(S.searchEvents(list, "@hubot pr title").map((e) => e.number)), [1]);
+  assert.deepEqual(plain(S.searchEvents(list, "@OCTOCAT pr").map((e) => e.number)), [1]);
+  assert.deepEqual(plain(S.searchEvents(list, "@nobody pr title")), []);
 });
 
 test("人名与关键词叠加；只有人名时仅按人筛", () => {
@@ -81,8 +81,8 @@ test("人名与关键词叠加；只有人名时仅按人筛", () => {
     card({ number: 1, title: "pr title" }),
     card({ number: 2, title: "无关内容" }),
   ];
-  assert.deepEqual(plain(S.searchEvents(list, "@//octocat/").map((e) => e.number)), [1, 2]);
-  assert.deepEqual(plain(S.searchEvents(list, "@//octocat/ title").map((e) => e.number)), [1]);
+  assert.deepEqual(plain(S.searchEvents(list, "@octocat").map((e) => e.number)), [1, 2]);
+  assert.deepEqual(plain(S.searchEvents(list, "@octocat title").map((e) => e.number)), [1]);
 });
 
 test("多个人名是 AND", () => {
@@ -90,26 +90,29 @@ test("多个人名是 AND", () => {
     card({ number: 1, people: ["octocat", "hubot"] }),
     card({ number: 2, people: ["octocat"], author: "octocat" }),
   ];
-  assert.deepEqual(plain(S.searchEvents(list, "@//octocat/ @//hubot/").map((e) => e.number)), [1]);
+  assert.deepEqual(plain(S.searchEvents(list, "@octocat @hubot").map((e) => e.number)), [1]);
 });
 
-test("未闭合的标记当普通文本，不误判为人名", () => {
-  const q = S.parseQuery("@//octocat pr title");
+test("旧写法 @//用户名/ 已废弃，按普通文本处理，不再触发人名筛选", () => {
+  const q = S.parseQuery("@//octocat/ pr title");
   assert.deepEqual(plain(q.people), []);
-  assert.ok(plain(q.terms).includes("@//octocat"));
-  assert.deepEqual(plain(S.searchEvents([card()], "@//octocat pr title")), []);
+  assert.ok(plain(q.terms).includes("@//octocat/"));
+  assert.deepEqual(plain(S.searchEvents([card()], "@//octocat/ pr title")), []);
+  const unclosed = S.parseQuery("@//octocat pr title");
+  assert.deepEqual(plain(unclosed.people), []);
+  assert.ok(plain(unclosed.terms).includes("@//octocat"));
 });
 
 test("兼容旧存档：people 缺失时 author 仍能判「涉及」", () => {
   const legacy = { title: "示例标题", author: "octocat" };
   assert.deepEqual(plain(S.involvedPeople(legacy)), ["octocat"]);
-  assert.equal(S.matchesQuery(legacy, S.parseQuery("@//octocat/ 示例")), true);
+  assert.equal(S.matchesQuery(legacy, S.parseQuery("@octocat 示例")), true);
 });
 
 test("空 author / 空 people 的旧卡片不崩", () => {
   const legacy = { title: "示例标题" };
   assert.equal(S.searchEvents([legacy], "示例").length, 1);
-  assert.deepEqual(plain(S.searchEvents([legacy], "@//octocat/")), []);
+  assert.deepEqual(plain(S.searchEvents([legacy], "@octocat")), []);
 });
 
 test("@用户名 可直接输入：关键词前后都能放，前导/尾随空格不影响", () => {
@@ -123,15 +126,6 @@ test("@用户名 可直接输入：关键词前后都能放，前导/尾随空�
   assert.deepEqual(plain(S.searchEvents([card()], "@octocat").map((e) => e.number)), [1]);
 });
 
-test("旧写法 @//用户名/ 继续兼容，未闭合的旧标记仍按普通文本处理", () => {
-  const q = S.parseQuery(" @//octocat/ pr title ");
-  assert.deepEqual(plain(q.people), ["octocat"]);
-  assert.deepEqual(plain(q.terms), ["pr", "title"]);
-  const unclosed = S.parseQuery("@//octocat pr title");
-  assert.deepEqual(plain(unclosed.people), []);
-  assert.ok(plain(unclosed.terms).includes("@//octocat"));
-});
-
 test("邮箱 / 标题中间的 @ 不误判为人名", () => {
   const q = S.parseQuery("foo@example.com pr title");
   assert.deepEqual(plain(q.people), []);
@@ -139,7 +133,8 @@ test("邮箱 / 标题中间的 @ 不误判为人名", () => {
   assert.deepEqual(plain(S.searchEvents([card()], "foo@example.com")), []);
 });
 
-test("新旧写法混用时多个人名仍是 AND", () => {
-  const list = [card(), card({ number: 2, people: ["octocat"] })];
-  assert.deepEqual(plain(S.searchEvents(list, "@octocat @//hubot/").map((e) => e.number)), [1]);
+test("带连字符的用户名可识别，重复人名只记一次", () => {
+  const q = S.parseQuery("@octo-cat @octo-cat pr");
+  assert.deepEqual(plain(q.people), ["octo-cat"]);
+  assert.deepEqual(plain(q.terms), ["pr"]);
 });

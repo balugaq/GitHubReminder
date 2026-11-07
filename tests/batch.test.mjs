@@ -64,3 +64,41 @@ test("空选择产出空数组，撤销空快照也不炸", () => {
   assert.deepEqual(plain(snapshot), []);
   assert.deepEqual(plain(B.buildUndo(null).statuses), []);
 });
+
+// 主人 2026-11-07 定的撤销语义：选择状态回滚 + 操作回滚，两者都要留现场。
+test("captureUndo 同时封存逐条旧状态与当时的选中集合，且是拷贝", () => {
+  const { snapshot } = B.buildBatch(
+    [card(), card({ number: 2, status: "done" })],
+    "read"
+  );
+  const selection = new Set(["octocat/hello-world#1", "octocat/hello-world#2"]);
+  const state = B.captureUndo(snapshot, selection);
+  assert.deepEqual(plain(state.snapshot.map((s) => s.status)), ["unread", "done"]);
+  assert.deepEqual(plain(state.selection), [
+    "octocat/hello-world#1",
+    "octocat/hello-world#2",
+  ]);
+  assert.deepEqual(plain(B.buildUndo(state.snapshot).statuses), ["unread", "done"]);
+  // 现场不该被后续改动污染
+  snapshot[0].status = "in_progress";
+  selection.add("octocat/hello-world#3");
+  assert.equal(state.snapshot[0].status, "unread");
+  assert.equal(state.selection.length, 2);
+});
+
+test("restoreSelection 精确回到编辑时的选集：剪掉失效卡片、去重、不叠加新选的", () => {
+  const valid = new Set(["owner/repo#1", "owner/repo#2", "owner/repo#3"]);
+  const restored = B.restoreSelection(
+    ["owner/repo#2", "owner/repo#1", "owner/repo#2", "owner/repo#99"],
+    valid
+  );
+  assert.deepEqual(plain(restored), ["owner/repo#2", "owner/repo#1"]);
+  // 撤销期间新勾的 owner/repo#3 不在快照里，不该被带回来
+  assert.equal(restored.includes("owner/repo#3"), false);
+});
+
+test("restoreSelection 空现场 / 空有效集合返回空数组", () => {
+  assert.deepEqual(plain(B.restoreSelection(null, ["owner/repo#1"])), []);
+  assert.deepEqual(plain(B.restoreSelection(["owner/repo#1"], null)), []);
+  assert.deepEqual(plain(B.captureUndo(null, null).selection), []);
+});

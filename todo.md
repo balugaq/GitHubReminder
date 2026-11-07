@@ -83,7 +83,7 @@
 - [x] **主界面启动不显示 / 窗口过小：位置记忆存到最小化离屏矩形**（完成 2026-11-06 @master直改，未提交待主人实测）：config.json 实测存的是 `x/y=-32000` + `199×34`，启动时 set_size/set_position 把它恢复到屏幕外。修复：① remember_window 跳过最小化/隐藏事件与离屏/小于 240 的矩形；② 启动读到坏存档则忽略、置空并落盘自愈；③ tauri.conf 主窗口 minWidth/minHeight 改 240×240 且运行时 set_min_size 兜底（配置只约束拖拽）；④ 托盘切换遇到离屏/过小窗口强制拉回居中。新增 3 个几何单测。
 - [x] **添加仓库时弹出 Issue/PR 选择弹窗**（完成 2026-11-01 @master直改，待主人实测；后端 list_repo_items 命令 + 管理窗口勾选弹窗，开/闭状态筛选，勾中按单条监听（新评论+状态变更）批量添加，已在监听的置灰默认勾选，重复添加报错汇总提示；视觉待主人目视确认）。
 - [x] **Explorer 重启后嵌入窗口的父级失效处理**（无需求，2026-11-01 主人确认不做）。
-- [x] **主界面批量选择通知并标记状态**（完成 2026-11-07 @master直改）：通知卡片左上角勾选框多选；选中后操作条选状态 + 应用（后端 `set_status_batch` 一次落盘改多张卡）；完成后底部向上滑入 toast「已完成编辑 · N 条」+ 撤销按钮（8s 有效），点撤销逐条恢复编辑前状态并恢复当时的选中集合。纯逻辑抽 `src/batch.js`（buildBatch / buildUndo）配 5 个 Node 单测，Rust 侧 `apply_statuses` 配 4 个单测；视觉与交互待主人目视确认。
+- [x] **主界面批量选择通知并标记状态**（完成 2026-11-07 @master直改）：通知卡片左上角勾选框多选；选中后操作条选状态 + 应用（后端 `set_status_batch` 一次落盘改多张卡）；完成后底部向上滑入 toast「已完成编辑 · N 条」+ 撤销按钮（8s 有效）。2026-11-07 主人确认撤销语义 = **选择状态回滚 + 操作回滚**：`captureUndo` 统一封存逐条旧状态与编辑时的选中集合，撤销时逐条写回状态、先清空当前选择再精确重建那批选中（不与期间新勾的叠加、剪掉已失效卡片）；写失败则现场与 toast 一起还回，可重试。纯逻辑抽 `src/batch.js`（buildBatch / buildUndo / captureUndo / restoreSelection）配 8 个 Node 单测，Rust 侧 `apply_statuses` 配 4 个单测；视觉与交互待主人目视确认。
 - [x] **嵌入模式下键盘输入验证**（完成 2026-10-31，主人实测 PAT 输入框在 WorkerW 子窗口中可正常打字）。
 - [x] **PAT 明文存储 → 迁移到 Windows 凭据管理器加密**（完成 2026-10-31 @master工作区直改，未提交待验收）  - 实现：Config.token 改 `#[serde(skip)]`（内存持有，config.json 不再落明文）；store.rs 新增 save_token/load_token 走 keyring 3（windows-native 凭据管理器，服务名 GitHubReminder/账户 pat）。
   - 迁移：启动时检测 config.json 里的旧明文 token → 写入凭据管理器并打印日志；写失败则本次会话仅内存保留（不回写磁盘）。凭据管理器读不到时回退会话内存值。

@@ -379,9 +379,9 @@ function pruneSelection() {
   }
 }
 
-function showUndoToast(count) {
+function showUndoToast(count, text) {
   const el = document.getElementById("undo-toast");
-  document.getElementById("undo-text").textContent = `已完成编辑 · ${count} 条`;
+  document.getElementById("undo-text").textContent = text || `已完成编辑 · ${count} 条`;
   el.classList.remove("show");
   void el.offsetWidth; // 连续两次编辑时强制重排，重新触发滑入动画
   el.classList.add("show");
@@ -411,8 +411,8 @@ async function applyBatchStatus() {
     flash(typeof err === "string" ? err : "批量标记失败");
     return;
   }
-  // 快照 + 当时的选中集合都留着：撤销后能直接换个状态重新应用
-  undoState = { snapshot, selection: [...selectedKeys] };
+  // 双回滚现场：操作快照 + 当时的选中集合，撤销后能直接换个状态重新应用
+  undoState = BATCH.captureUndo(snapshot, selectedKeys);
   clearSelection();
   renderFeed();
   showUndoToast(payload.repos.length);
@@ -421,20 +421,28 @@ async function applyBatchStatus() {
 async function undoBatch() {
   if (!undoState) return;
   const state = undoState;
-  undoState = null;
+  undoState = null; // 先摘掉现场防重复点击，失败时再放回去
   hideUndoToast();
   const payload = BATCH.buildUndo(state.snapshot);
   if (payload.repos.length === 0) return;
   try {
-    allEvents = await invoke("set_status_batch", payload);
+    allEvents = await invoke("set_status_batch", payload); // 操作回滚：逐条写回旧状态
   } catch (err) {
-    flash(typeof err === "string" ? err : "撤销失败");
+    // 没写成功就不能算撤销完，现场与 toast 一起还回去，让主人能重试
+    undoState = state;
+    showUndoToast(payload.repos.length, "撤销未成功 · 可重试");
+    flash(typeof err === "string" ? err : "撤销失败，可重试");
     return;
   }
-  for (const key of state.selection) selectedKeys.add(key);
-  pruneSelection();
+  // 选择状态回滚：精确回到编辑时那一批，不与 toast 期间新勾的卡片叠加
+  selectedKeys.clear();
+  const validKeys = new Set(allEvents.map(entityKey));
+  for (const key of BATCH.restoreSelection(state.selection, validKeys)) {
+    selectedKeys.add(key);
+  }
+  updateBatchBar();
   renderFeed();
-  flash("已撤销，选择已恢复");
+  flash("已撤销，操作与选择均已恢复");
 }
 
 // 置顶/取消置顶；超过 3 个时后端拒绝，这里把原因提示出来
