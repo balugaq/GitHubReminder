@@ -20,7 +20,8 @@
         "transparent": true,
         "alwaysOnTop": false,
         "resizable": true,
-        "center": true
+        "center": true,
+        "dragDropEnabled": false
       },
       {
         "label": "manage",
