@@ -60,8 +60,16 @@ async function syncFromRust() {
   goDefaultView();
 }
 
-// 默认分类：有未读开未读，其次处理中，否则回全部；仅启动时定一次，之后不抢用户手上选的 tab
+// 分类记忆只在列表视图生效；切换即写而不等关闭事件——点关闭是隐藏到托盘，强杀进程也不该丢
+const STATUS_KEYS = ["all", "unread", "read", "in_progress", "done"];
+
+// 仅启动时定一次，之后不抢用户手上选的 tab；脏值不能让五个 tab 全不高亮
 function pickDefaultStatus() {
+  const remembered = loadSettings().lastStatus;
+  if (STATUS_KEYS.includes(remembered)) {
+    activeStatus = remembered;
+    return;
+  }
   if (allEvents.some((e) => e.status === "unread")) activeStatus = "unread";
   else if (allEvents.some((e) => e.status === "in_progress")) activeStatus = "in_progress";
   else activeStatus = "all";
@@ -830,6 +838,7 @@ function applyWindowMode() {
     btn.addEventListener("click", () => {
       if (activeStatus === btn.dataset.status) return;
       activeStatus = btn.dataset.status;
+      if (viewMode === "list") saveSettings({ lastStatus: activeStatus });
       feedLimit = INITIAL_LIMIT;
       renderFeed();
       document.getElementById("event-feed").scrollTop = 0;

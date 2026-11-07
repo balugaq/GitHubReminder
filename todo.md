@@ -107,7 +107,13 @@
   - 纯逻辑抽 `src/board.js`（groupByStatus / normalizeStatus / dropStatus）配 `tests/board.test.mjs` 5 个单测，fixture 全用通用示例。板视图一次渲染全量（后端上限 200 条），不套列表的触底续展。
   - 验收：`npm test` 26/26 通过、三个 JS `node --check` 通过、cargo check + clippy --all-targets -D warnings 零代码警告、grep 确认落地。
   - 待主人目视确认：看板风格还原度、窗口过小时横向滚动条能否向右滑、拖放高亮与手感、白卡片在半透明底色上的对比。
-- [ ] **T3 列表视图记忆程序关闭时所在分类，重启直接切回**（依赖：T2）
+- [x] **T3 列表视图记忆程序关闭时所在分类，重启直接切回**（完成 2026-11-07 @worktree/viewmode）
+  - `pickDefaultStatus()` 优先读 `ghr.settings.lastStatus`，用 `STATUS_KEYS`（5 个合法分类）校验；脏值 / 首次使用才回退原逻辑（有未读→未读，其次处理中，否则全部）。仅启动时定一次，之后不抢用户手上选的 tab。
+  - 切 tab 时（仅列表视图）**即时**写 `lastStatus`，不挂关闭钩子：主窗口点关闭其实是隐藏到托盘、窗口不销毁，且强杀进程也该保住最后一次选择。
+  - 板视图下 tabs 隐藏天然不写；从板视图切回列表仍停在记忆的分类。
+  - 逻辑内联在 main.js（十行级，抽单测收益低），验收走全量回归 + grep 静态核对。
+  - 验收：`npm test` 26/26 通过、`node --check` 通过、cargo check + clippy --all-targets -D warnings 零代码警告、grep 确认 6 处落地。
+  - 待主人实测：列表视图切到某分类 → 托盘退出/重启 → 是否直接落在该分类。
 
 ## 里程碑
 - [x] M1 骨架：透明窗口 / 引导页 / 设置页 / 0.5s 上浮动画
