@@ -57,6 +57,10 @@
             <button id="btn-batch-apply" class="batch-btn" title="批量标记状态">应用</button>
             <button id="btn-batch-clear" class="batch-btn" title="清空选择">×</button>
           </div>
+          <!-- 板视图：四列按状态分栏，横向可滚动，卡片可拖到别的列改分类 -->
+          <div id="board-wrap" class="hidden">
+            <div id="board-columns"></div>
+          </div>
           <div id="event-feed">
             <p id="feed-empty" class="hint">暂无新事件。轮询每 60 秒一次，有新动态会自动浮现。</p>
           </div>
@@ -85,6 +89,7 @@
     </div>
     <script src="search.js"></script>
     <script src="batch.js"></script>
+    <script src="board.js"></script>
     <script src="main.js"></script>
   </body>
 </html>

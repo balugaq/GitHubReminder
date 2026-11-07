@@ -669,6 +669,13 @@ document.getElementById("input-autostart").addEventListener("change", async (e) 
   }
 });
 
+// 视图模式随事件把值直接带给主窗口，不赌跨窗口 localStorage 的实时同步
+document.getElementById("input-view-mode").addEventListener("change", (e) => {
+  const mode = e.target.value === "board" ? "board" : "list";
+  saveSettings({ viewMode: mode });
+  emit("ghr-view-mode", mode).catch(() => {});
+});
+
 document.getElementById("input-color").addEventListener("input", (e) => {
   saveSettings({ color: e.target.value });
   applyAppearance();
@@ -709,6 +716,8 @@ document.getElementById("btn-close").addEventListener("click", () => getCurrentW
     /* 自启状态读取失败不影响其余功能 */
   }
   const { color = "#4a90d9", opacity = 70 } = loadSettings();
+  document.getElementById("input-view-mode").value =
+    loadSettings().viewMode === "board" ? "board" : "list";
   document.getElementById("input-color").value = color;
   document.getElementById("input-opacity").value = opacity;
   document.getElementById("opacity-val").textContent = `${opacity}%`;

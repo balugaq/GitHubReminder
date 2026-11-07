@@ -99,7 +99,14 @@
   - 验收：cargo check + clippy --all-targets -D warnings 零代码警告（stderr 的 os error 5 是共享 incremental 锁的环境警告），node --check 通过，grep 确认三处落地。
   - 已知回归（主人明确「先不动」）：最大化触发 Resized → remember_window 把全屏矩形写进 config.window，下次启动会恢复成没有最大化标志的伪全屏。
   - 待主人目视确认：按钮位置/图标；嵌入（WorkerW 子窗口）模式下 toggleMaximize 的实际表现。
-- [ ] **T2 设置增加视图模式（列表 / 板视图）+ 板视图拖拽切分类**（依赖：无；T3 依赖本项）
+- [x] **T2 设置增加视图模式（列表 / 板视图）+ 板视图拖拽切分类**（完成 2026-11-07 @worktree/viewmode）
+  - 设置页加 `#input-view-mode`（列表 / 板），值存 `ghr.settings` 并用 `emit("ghr-view-mode", mode)` **带 payload** 同步主窗口，不赌跨窗口 localStorage 实时同步；主窗口收到后先落盘再切。
+  - 板视图在 `#view-list` 内与列表互斥显示，共用搜索栏与 status-hint；tabs / 置顶区 / 批量条在板视图隐藏。4 列 = 4 个状态分类，列头带计数，白卡片沿用 PaperMC 看板的「repo #num / 标题 / 标签 / 元数据行」层次。
+  - 横向溢出按需求保留：`#board-columns` 固定 232px 列宽不收缩，`#board-wrap` `overflow-x:auto` 出横向滚动条；两层滚动容器都换成自定义滚动条样式。
+  - 拖拽用 HTML5 DnD，drop 复用已有 `set_status` 命令（无需改 Rust）；拖回原列 / 非法列不发请求，靠 `board.js::dropStatus` 判定。
+  - 纯逻辑抽 `src/board.js`（groupByStatus / normalizeStatus / dropStatus）配 `tests/board.test.mjs` 5 个单测，fixture 全用通用示例。板视图一次渲染全量（后端上限 200 条），不套列表的触底续展。
+  - 验收：`npm test` 26/26 通过、三个 JS `node --check` 通过、cargo check + clippy --all-targets -D warnings 零代码警告、grep 确认落地。
+  - 待主人目视确认：看板风格还原度、窗口过小时横向滚动条能否向右滑、拖放高亮与手感、白卡片在半透明底色上的对比。
 - [ ] **T3 列表视图记忆程序关闭时所在分类，重启直接切回**（依赖：T2）
 
 ## 里程碑

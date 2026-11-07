@@ -639,3 +639,134 @@ button { font-family: inherit; }
 #content::-webkit-scrollbar-corner,
 #event-feed::-webkit-scrollbar-corner,
 #stats-list::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---- 板视图：GitHub Projects 风格横向分列 ----
+   列宽固定不收缩，窗口小时靠 #board-wrap 的横向滚动条向右滑，溢出是预期行为。 */
+#board-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+#board-columns {
+  display: flex;
+  gap: 10px;
+  height: 100%;
+  min-width: max-content;
+  align-items: stretch;
+}
+.board-col {
+  flex: 0 0 232px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.14);
+  transition: background 0.15s;
+}
+.board-col.drop-target {
+  background: rgba(255, 255, 255, 0.16);
+  outline: 2px dashed rgba(255, 255, 255, 0.8);
+  outline-offset: -2px;
+}
+.board-col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.board-col-count { font-size: 11px; font-weight: 400; opacity: 0.65; }
+.board-col-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+}
+.board-empty { padding: 10px 0; font-size: 11px; text-align: center; opacity: 0.55; }
+
+/* 白卡片是看板最标志性的层次；显式深色字，不继承主界面的白色 --text */
+.board-card {
+  display: block;
+  padding: 8px 9px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  color: #1f2328;
+  text-decoration: none;
+  cursor: grab;
+}
+.board-card:hover { border-color: #0969da; }
+.board-card:active { cursor: grabbing; }
+.board-card.dragging { opacity: 0.45; }
+.board-meta {
+  font-size: 10.5px;
+  color: #656d76;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-title {
+  margin: 4px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+}
+.board-kind {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1f2328;
+  background: #eaeef2;
+}
+.board-sub {
+  margin-top: 7px;
+  padding-top: 5px;
+  border-top: 1px solid #d8dee4;
+  font-size: 10.5px;
+  color: #656d76;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 板视图两层滚动容器也换成自定义滚动条，否则会冒系统粗条 */
+#board-wrap::-webkit-scrollbar,
+.board-col-body::-webkit-scrollbar { width: 8px; height: 8px; }
+#board-wrap::-webkit-scrollbar-track,
+.board-col-body::-webkit-scrollbar-track { background: var(--scroll-track); border-radius: 4px; }
+#board-wrap::-webkit-scrollbar-thumb,
+.board-col-body::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 1px solid var(--scroll-thumb-edge);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+#board-wrap::-webkit-scrollbar-thumb:hover,
+.board-col-body::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  border-color: var(--scroll-thumb-edge-hover);
+}
+#board-wrap::-webkit-scrollbar-button,
+.board-col-body::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+#board-wrap::-webkit-scrollbar-corner { background: transparent; }
+
+/* span 默认 inline，ellipsis 与 margin 都不生效，卡片内这几行统一改成块级 */
+.board-meta, .board-sub { display: block; }

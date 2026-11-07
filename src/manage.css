@@ -303,6 +303,20 @@
 #tab-settings input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
 #tab-settings .hint { color: var(--dim); }
 #tab-settings .form-row label { color: #e8eaf0; font-size: 13px; font-weight: 600; }
+#tab-settings select {
+  width: 100%;
+  max-width: 560px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #e8eaf0;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+#tab-settings select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-glow); }
+#tab-settings select option { background: #1c1e26; color: #e8eaf0; }
 
 /* ---- 滚动条：深色玻璃主题，用 --accent 派生，替换系统默认风格 ----
    连带覆盖浏览弹窗的 #picker-list（原先漏了，会冒系统粗条）。 */

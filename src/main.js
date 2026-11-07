@@ -106,6 +106,10 @@ let feedObserver = null;
 // 全量事件（含历史持久化），新事件追加，状态以后端为准
 let allEvents = [];
 
+// ---- 板视图 ----
+const BOARD = window.GhrBoard;
+let viewMode = "list"; // "list" | "board"，由管理窗口 emit 同步
+
 // ---- 批量选择 ----
 const BATCH = window.GhrBatch;
 const selectedKeys = new Set();
@@ -253,6 +257,7 @@ function observeFeedSentinel() {
   feedObserver.observe(sentinel);
 }
 
+// 两种视图共用一份 allEvents 与搜索条件，只在「怎么排」上分叉
 function renderFeed() {
   // 列表会被整体重建，旧哨兵已失效，先断开观察器，避免回调打到空节点
   if (feedObserver) {
@@ -261,6 +266,12 @@ function renderFeed() {
   }
   renderPinned();
   renderTabs();
+  if (viewMode === "board") renderBoard();
+  else renderList();
+  updateBatchBar();
+}
+
+function renderList() {
   const feed = document.getElementById("event-feed");
   const scrollTop = feed.scrollTop;
   feed.innerHTML = "";
@@ -302,7 +313,110 @@ function renderFeed() {
   }
   feed.scrollTop = scrollTop;
   observeFeedSentinel();
-  updateBatchBar();
+}
+
+// 白卡片是看板最标志性的层次；内容沿用列表卡片的字段，拖放只改状态
+function buildBoardCard(ev) {
+  const card = document.createElement("a");
+  card.className = "board-card fade-up";
+  card.href = ev.url;
+  card.draggable = true;
+  card.dataset.key = entityKey(ev);
+  card.innerHTML =
+    `<span class="board-meta"></span>` +
+    `<span class="board-title"></span>` +
+    `<span class="board-kind"></span>` +
+    `<span class="board-sub"></span>`;
+  card.querySelector(".board-meta").textContent =
+    ev.repo + (ev.number != null ? ` #${ev.number}` : "");
+  card.querySelector(".board-title").textContent = ev.title;
+  card.querySelector(".board-kind").textContent = KIND_LABEL[ev.kind] || ev.kind;
+  card.querySelector(".board-sub").textContent =
+    (LAST_EVENT_LABEL[ev.lastEventKind] || ev.lastEventKind || "") +
+    (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
+  if (ev.author) card.title = `作者: ${ev.author}`;
+  bindCard(card, ev);
+  card.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", card.dataset.key);
+    e.dataTransfer.effectAllowed = "move";
+    card.classList.add("dragging");
+  });
+  card.addEventListener("dragend", () => {
+    card.classList.remove("dragging");
+    clearDropTargets();
+  });
+  return card;
+}
+
+function clearDropTargets() {
+  for (const col of document.querySelectorAll(".board-col.drop-target")) {
+    col.classList.remove("drop-target");
+  }
+}
+
+function onBoardDrop(targetStatus, e) {
+  e.preventDefault();
+  clearDropTargets();
+  const key = e.dataTransfer.getData("text/plain");
+  const ev = allEvents.find((item) => entityKey(item) === key);
+  if (!ev) return;
+  const status = BOARD.dropStatus(ev.status, targetStatus);
+  if (!status) return;
+  applyStatus(ev, status);
+}
+
+// 板视图一次渲染全量（后端上限 200 条），不用列表那套触底续展
+function renderBoard() {
+  const wrapEl = document.getElementById("board-wrap");
+  const scrollLeft = wrapEl.scrollLeft;
+  const wrap = document.getElementById("board-columns");
+  wrap.innerHTML = "";
+  const groups = BOARD.groupByStatus(SEARCH.searchEvents(allEvents, searchQuery));
+  for (const [status, label] of BOARD.COLUMNS) {
+    const col = document.createElement("div");
+    col.className = "board-col";
+    const head = document.createElement("div");
+    head.className = "board-col-head";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const count = document.createElement("span");
+    count.className = "board-col-count";
+    count.textContent = `(${groups[status].length})`;
+    head.append(name, count);
+    const body = document.createElement("div");
+    body.className = "board-col-body";
+    if (groups[status].length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "board-empty";
+      empty.textContent = "暂无通知";
+      body.appendChild(empty);
+    } else {
+      for (const ev of groups[status]) body.appendChild(buildBoardCard(ev));
+    }
+    col.append(head, body);
+    col.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      clearDropTargets();
+      col.classList.add("drop-target");
+    });
+    col.addEventListener("drop", (e) => onBoardDrop(status, e));
+    wrap.appendChild(col);
+  }
+  wrapEl.scrollLeft = scrollLeft;
+}
+
+// 视图模式只切显隐与渲染方式；分类由 pickDefaultStatus / 用户点击决定，这里不抢
+function applyViewMode() {
+  viewMode = loadSettings().viewMode === "board" ? "board" : "list";
+  const board = viewMode === "board";
+  document.getElementById("board-wrap").classList.toggle("hidden", !board);
+  document.getElementById("event-feed").classList.toggle("hidden", board);
+  document.getElementById("status-tabs").classList.toggle("hidden", board);
+  document.getElementById("pinned-zone").classList.toggle("hidden", board);
+  clearSelection();
+  feedLimit = INITIAL_LIMIT;
+  renderFeed();
 }
 
 // ---- 状态变更 / 置顶 / 删除 / 复制 ----
@@ -336,7 +450,7 @@ const UNDO_TIMEOUT_MS = 8000;
 function updateBatchBar() {
   const bar = document.getElementById("batch-bar");
   const n = selectedKeys.size;
-  bar.classList.toggle("hidden", n === 0);
+  bar.classList.toggle("hidden", n === 0 || viewMode === "board");
   document.getElementById("batch-count").textContent = `已选 ${n} 条`;
 }
 
@@ -702,6 +816,7 @@ function applyWindowMode() {
   await loadEvents();
   pickDefaultStatus();
   goDefaultView();
+  applyViewMode();
   // 列表页初始是 hidden，显示出来后重新挂观察器，确保哨兵能被正确观察
   observeFeedSentinel();
 
@@ -752,4 +867,11 @@ function applyWindowMode() {
 
   // 管理窗口改了外观，实时同步主窗口
   listen("ghr-appearance", () => applyAppearance());
+
+  // 视图模式：值随事件带过来，主窗口先落盘再切，重启后 loadSettings 还能读到
+  listen("ghr-view-mode", (e) => {
+    const mode = e.payload === "board" ? "board" : "list";
+    saveSettings({ viewMode: mode });
+    applyViewMode();
+  });
 })();
