@@ -106,6 +106,12 @@ let feedObserver = null;
 // 全量事件（含历史持久化），新事件追加，状态以后端为准
 let allEvents = [];
 
+// ---- 批量选择 ----
+const BATCH = window.GhrBatch;
+const selectedKeys = new Set();
+let undoState = null; // { snapshot, selection }：最近一次批量编辑的现场，供撤销
+let undoTimer = null;
+
 function entityKey(ev) {
   return `${(ev.repo || "").toLowerCase()}:${ev.number ?? ""}`;
 }
@@ -127,11 +133,14 @@ function bindCard(card, ev) {
 
 function buildCard(ev) {
   const card = document.createElement("a");
-  card.className = `event-card fade-up status-${ev.status || "unread"}`;
+  const key = entityKey(ev);
+  const checked = selectedKeys.has(key);
+  card.className = `event-card fade-up status-${ev.status || "unread"}${checked ? " selected" : ""}`;
   if (ev.pinned) card.classList.add("pinned");
   card.href = ev.url;
-  card.dataset.key = entityKey(ev);
+  card.dataset.key = key;
   card.innerHTML =
+    `<span class="event-check${checked ? " checked" : ""}" role="checkbox" aria-checked="${checked}" title="选择这张卡"></span>` +
     `<span class="event-kind kind-${ev.kind}">${KIND_LABEL[ev.kind] || ev.kind}</span>` +
     `<span class="event-repo"></span>` +
     `<span class="event-title"></span>` +
@@ -146,6 +155,12 @@ function buildCard(ev) {
   // 作者可搜但卡片布局里不展示，hover 给个轻量提示，便于核对搜索命中原因
   if (ev.author) card.title = `作者: ${ev.author}`;
   bindCard(card, ev);
+  card.querySelector(".event-check").addEventListener("click", (e) => {
+    // 勾选框不能触发 <a> 的打开链接
+    e.preventDefault();
+    e.stopPropagation();
+    toggleSelection(key);
+  });
   return card;
 }
 
@@ -287,6 +302,7 @@ function renderFeed() {
   }
   feed.scrollTop = scrollTop;
   observeFeedSentinel();
+  updateBatchBar();
 }
 
 // ---- 状态变更 / 置顶 / 删除 / 复制 ----
@@ -312,6 +328,113 @@ async function applyStatus(ev, status) {
   } catch (err) {
     console.warn("更新状态失败:", err);
   }
+}
+
+// ---- 批量标记 + 撤销 ----
+const UNDO_TIMEOUT_MS = 8000;
+
+function updateBatchBar() {
+  const bar = document.getElementById("batch-bar");
+  const n = selectedKeys.size;
+  bar.classList.toggle("hidden", n === 0);
+  document.getElementById("batch-count").textContent = `已选 ${n} 条`;
+}
+
+function paintSelection(key, on) {
+  for (const el of document.querySelectorAll(".event-card")) {
+    if (el.dataset.key !== key) continue;
+    el.classList.toggle("selected", on);
+    const check = el.querySelector(".event-check");
+    if (!check) continue;
+    check.classList.toggle("checked", on);
+    check.setAttribute("aria-checked", String(on));
+  }
+}
+
+function toggleSelection(key) {
+  const on = !selectedKeys.has(key);
+  if (on) selectedKeys.add(key);
+  else selectedKeys.delete(key);
+  paintSelection(key, on);
+  updateBatchBar();
+}
+
+function clearSelection() {
+  selectedKeys.clear();
+  for (const el of document.querySelectorAll(".event-card.selected")) {
+    el.classList.remove("selected");
+    const check = el.querySelector(".event-check");
+    if (!check) continue;
+    check.classList.remove("checked");
+    check.setAttribute("aria-checked", "false");
+  }
+  updateBatchBar();
+}
+
+// 轮询/删除后有些卡片已不在列表里，选中数不该虚高
+function pruneSelection() {
+  const valid = new Set(allEvents.map(entityKey));
+  for (const key of [...selectedKeys]) {
+    if (!valid.has(key)) selectedKeys.delete(key);
+  }
+}
+
+function showUndoToast(count) {
+  const el = document.getElementById("undo-toast");
+  document.getElementById("undo-text").textContent = `已完成编辑 · ${count} 条`;
+  el.classList.remove("show");
+  void el.offsetWidth; // 连续两次编辑时强制重排，重新触发滑入动画
+  el.classList.add("show");
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => {
+    hideUndoToast();
+    undoState = null;
+  }, UNDO_TIMEOUT_MS);
+}
+
+function hideUndoToast() {
+  clearTimeout(undoTimer);
+  document.getElementById("undo-toast").classList.remove("show");
+}
+
+async function applyBatchStatus() {
+  const status = document.getElementById("batch-status").value;
+  const targets = allEvents.filter((ev) => selectedKeys.has(entityKey(ev)));
+  if (targets.length === 0) {
+    clearSelection();
+    return;
+  }
+  const { payload, snapshot } = BATCH.buildBatch(targets, status);
+  try {
+    allEvents = await invoke("set_status_batch", payload);
+  } catch (err) {
+    flash(typeof err === "string" ? err : "批量标记失败");
+    return;
+  }
+  // 快照 + 当时的选中集合都留着：撤销后能直接换个状态重新应用
+  undoState = { snapshot, selection: [...selectedKeys] };
+  clearSelection();
+  renderFeed();
+  showUndoToast(payload.repos.length);
+}
+
+async function undoBatch() {
+  if (!undoState) return;
+  const state = undoState;
+  undoState = null;
+  hideUndoToast();
+  const payload = BATCH.buildUndo(state.snapshot);
+  if (payload.repos.length === 0) return;
+  try {
+    allEvents = await invoke("set_status_batch", payload);
+  } catch (err) {
+    flash(typeof err === "string" ? err : "撤销失败");
+    return;
+  }
+  for (const key of state.selection) selectedKeys.add(key);
+  pruneSelection();
+  renderFeed();
+  flash("已撤销，选择已恢复");
 }
 
 // 置顶/取消置顶；超过 3 个时后端拒绝，这里把原因提示出来
@@ -431,6 +554,7 @@ async function refreshEvents({ silent = false } = {}) {
   }
   if (JSON.stringify(next) === JSON.stringify(allEvents)) return true;
   allEvents = next;
+  pruneSelection();
   renderFeed();
   return true;
 }
@@ -521,6 +645,11 @@ btnSearchClear.addEventListener("click", () => {
   searchInput.focus();
 });
 
+// 批量操作与撤销同样放在顶层绑定，不塞进 init 的 await 之后
+document.getElementById("btn-batch-apply").addEventListener("click", applyBatchStatus);
+document.getElementById("btn-batch-clear").addEventListener("click", clearSelection);
+document.getElementById("btn-undo").addEventListener("click", undoBatch);
+
 // 🔄 立即刷新
 document.getElementById("btn-refresh").addEventListener("click", async () => {
   const btn = document.getElementById("btn-refresh");
@@ -591,6 +720,7 @@ function applyWindowMode() {
     closeContextMenu();
     // 只有搜索框聚焦时 Esc 才清空，没聚焦时只收菜单、不动已有查询
     if (document.activeElement === searchInput && searchInput.value) clearSearch();
+    else if (selectedKeys.size) clearSelection();
   });
   window.addEventListener("blur", closeContextMenu);
   document.getElementById("event-feed").addEventListener("scroll", closeContextMenu);

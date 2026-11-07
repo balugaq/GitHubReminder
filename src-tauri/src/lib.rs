@@ -985,6 +985,47 @@ fn set_status(
     Ok(sorted_entities(&state))
 }
 
+// 批量改状态：标记时 statuses 全填同一个值，撤销时逐条填快照里的原状态。
+// 抽成纯函数是为了不依赖 AppState 也能单测参数校验与定位逻辑。
+fn apply_statuses(
+    cfg: &mut Config,
+    repos: &[String],
+    numbers: &[Option<u64>],
+    statuses: &[String],
+) -> Result<(), String> {
+    if repos.len() != numbers.len() || repos.len() != statuses.len() {
+        return Err("批量参数长度不一致".into());
+    }
+    if statuses.iter().any(|s| !ENTITY_STATUSES.contains(&s.as_str())) {
+        return Err("批量状态里有未知状态".into());
+    }
+    for i in 0..repos.len() {
+        for e in cfg.entities.iter_mut() {
+            if e.repo.eq_ignore_ascii_case(&repos[i]) && e.number == numbers[i] {
+                e.status = statuses[i].clone();
+            }
+        }
+    }
+    Ok(())
+}
+
+// 一次落盘改多张卡，避免前端循环 invoke 导致 N 次重绘和 N 次写盘
+#[tauri::command]
+fn set_status_batch(
+    state: tauri::State<Arc<AppState>>,
+    repos: Vec<String>,
+    numbers: Vec<Option<u64>>,
+    statuses: Vec<String>,
+) -> Result<Vec<Entity>, String> {
+    state.with_config(|cfg| apply_statuses(cfg, &repos, &numbers, &statuses))?;
+    for (repo, number) in repos.iter().zip(numbers.iter()) {
+        if let Some(n) = number {
+            state.notified.lock().unwrap().remove(&format!("{repo}#{n}"));
+        }
+    }
+    Ok(sorted_entities(&state))
+}
+
 // 删除卡片：只删通知记录，不动监听配置；被删条目不会再出现（除非有新动态）
 #[tauri::command]
 fn delete_event(
@@ -1238,6 +1279,7 @@ pub fn run() {
             mark_read,
             get_events,
             set_status,
+            set_status_batch,
             delete_event,
             set_pin,
             get_stats,
@@ -1523,5 +1565,76 @@ mod search_field_tests {
         assert_eq!(cfg.entities.len(), 1);
         assert_eq!(cfg.entities[0].author, "octocat");
         assert_eq!(cfg.entities[0].people, vec!["octocat", "hubot"]);
+    }
+}
+
+#[cfg(test)]
+mod batch_status_tests {
+    use super::*;
+
+    fn two_entities() -> Config {
+        let mut cfg = Config::default();
+        cfg.entities.push(Entity {
+            kind: "pr".into(),
+            repo: "owner/repo".into(),
+            number: Some(1),
+            status: "unread".into(),
+            ..Entity::default()
+        });
+        cfg.entities.push(Entity {
+            kind: "issue".into(),
+            repo: "owner/repo".into(),
+            number: Some(2),
+            status: "done".into(),
+            ..Entity::default()
+        });
+        cfg
+    }
+
+    #[test]
+    fn batch_sets_selected_to_one_status() {
+        let mut cfg = two_entities();
+        let repos = vec!["owner/repo".to_string(), "owner/repo".to_string()];
+        let numbers = vec![Some(1), Some(2)];
+        let statuses = vec!["in_progress".to_string(), "in_progress".to_string()];
+        apply_statuses(&mut cfg, &repos, &numbers, &statuses).unwrap();
+        assert_eq!(cfg.entities[0].status, "in_progress");
+        assert_eq!(cfg.entities[1].status, "in_progress");
+    }
+
+    #[test]
+    fn batch_restores_mixed_statuses_for_undo() {
+        let mut cfg = two_entities();
+        let repos = vec!["owner/repo".to_string(), "owner/repo".to_string()];
+        let numbers = vec![Some(1), Some(2)];
+        let snapshot = vec!["unread".to_string(), "done".to_string()];
+        apply_statuses(&mut cfg, &repos, &numbers, &snapshot).unwrap();
+        assert_eq!(cfg.entities[0].status, "unread");
+        assert_eq!(cfg.entities[1].status, "done");
+    }
+
+    #[test]
+    fn batch_rejects_mismatched_lengths_and_unknown_status() {
+        let mut cfg = two_entities();
+        let repos = vec!["owner/repo".to_string()];
+        assert!(apply_statuses(&mut cfg, &repos, &[], &[]).is_err());
+        assert!(
+            apply_statuses(&mut cfg, &repos, &[Some(1)], &["bogus".to_string()]).is_err()
+        );
+        assert_eq!(cfg.entities[0].status, "unread", "校验失败不该改到任何卡片");
+    }
+
+    #[test]
+    fn batch_matches_repo_case_insensitively() {
+        let mut cfg = two_entities();
+        apply_statuses(
+            &mut cfg,
+            &["OWNER/REPO".to_string()],
+            &[Some(2)],
+            &["read".to_string()],
+        )
+        .unwrap();
+        assert_eq!(cfg.entities[0].status, "unread");
+        assert_eq!(cfg.entities[1].status, "read");
     }
 }
