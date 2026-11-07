@@ -694,24 +694,27 @@ button { font-family: inherit; }
 }
 .board-empty { padding: 10px 0; font-size: 11px; text-align: center; opacity: 0.55; }
 
-/* 白卡片是看板最标志性的层次；显式深色字，不继承主界面的白色 --text */
+/* 卡片配色与列表 event-card 同语言：深色半透明 + 白字 + 彩色类型 pill */
 .board-card {
   display: block;
   padding: 8px 9px;
-  border: 1px solid #d0d7de;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.96);
+  background: rgba(0, 0, 0, 0.26);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-  color: #1f2328;
+  color: var(--text);
   text-decoration: none;
   cursor: grab;
 }
-.board-card:hover { border-color: #0969da; }
+.board-card:hover { background: rgba(0, 0, 0, 0.42); border-color: rgba(255, 255, 255, 0.45); }
 .board-card:active { cursor: grabbing; }
 .board-card.dragging { opacity: 0.45; }
+.board-card.status-read,
+.board-card.status-done { opacity: 0.5; }
+.board-card.status-in_progress { box-shadow: 0 0 0 1.5px rgba(255, 190, 80, 0.65) inset; }
 .board-meta {
   font-size: 10.5px;
-  color: #656d76;
+  color: rgba(255, 255, 255, 0.72);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -730,18 +733,18 @@ button { font-family: inherit; }
 .board-kind {
   display: inline-block;
   padding: 1px 6px;
-  border-radius: 10px;
+  border-radius: 4px;
   font-size: 10px;
   font-weight: 700;
-  color: #1f2328;
-  background: #eaeef2;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.25);
 }
 .board-sub {
   margin-top: 7px;
   padding-top: 5px;
-  border-top: 1px solid #d8dee4;
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
   font-size: 10.5px;
-  color: #656d76;
+  color: rgba(255, 255, 255, 0.72);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

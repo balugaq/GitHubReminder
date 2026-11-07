@@ -327,6 +327,7 @@ function renderList() {
 function buildBoardCard(ev) {
   const card = document.createElement("a");
   card.className = "board-card fade-up";
+  if (ev.status) card.classList.add(`status-${ev.status}`);
   card.href = ev.url;
   card.draggable = true;
   card.dataset.key = entityKey(ev);
@@ -338,7 +339,9 @@ function buildBoardCard(ev) {
   card.querySelector(".board-meta").textContent =
     ev.repo + (ev.number != null ? ` #${ev.number}` : "");
   card.querySelector(".board-title").textContent = ev.title;
-  card.querySelector(".board-kind").textContent = KIND_LABEL[ev.kind] || ev.kind;
+  const kindEl = card.querySelector(".board-kind");
+  kindEl.textContent = KIND_LABEL[ev.kind] || ev.kind;
+  if (ev.kind) kindEl.classList.add(`kind-${ev.kind}`);
   card.querySelector(".board-sub").textContent =
     (LAST_EVENT_LABEL[ev.lastEventKind] || ev.lastEventKind || "") +
     (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
