@@ -91,6 +91,30 @@
   - set_token 改为 Result，凭据写入失败时报错给前端（manage.js alert 提示，原值不动）。
   - clippy -D warnings 零警告。待主人实测：添加 token 后状态变"已设置"，重启后轮询/通知正常。
 
+## 本轮任务（2026-11-07）
+依赖链（已发给主人确认）：`T1 最大化按钮` 独立；`T2 视图模式 + 板视图 + 拖拽 → T3 列表分类记忆`。
+三条共享 index.html / main.js / styles.css，故主人确认走**单 worktree 串行**（worktree/viewmode），逐条 commit。
+- [x] **T1 主界面右上角最大化按钮**（完成 2026-11-07 @worktree/viewmode）
+  - index.html 标题栏加 `#btn-max`（□），main.js 绑 `getCurrentWindow().toggleMaximize()`，capabilities/default.json 补 `core:window:allow-toggle-maximize`；按主人选择不改 Rust 逻辑。
+  - 验收：cargo check + clippy --all-targets -D warnings 零代码警告（stderr 的 os error 5 是共享 incremental 锁的环境警告），node --check 通过，grep 确认三处落地。
+  - 已知回归（主人明确「先不动」）：最大化触发 Resized → remember_window 把全屏矩形写进 config.window，下次启动会恢复成没有最大化标志的伪全屏。
+  - 待主人目视确认：按钮位置/图标；嵌入（WorkerW 子窗口）模式下 toggleMaximize 的实际表现。
+- [x] **T2 设置增加视图模式（列表 / 板视图）+ 板视图拖拽切分类**（完成 2026-11-07 @worktree/viewmode）
+  - 设置页加 `#input-view-mode`（列表 / 板），值存 `ghr.settings` 并用 `emit("ghr-view-mode", mode)` **带 payload** 同步主窗口，不赌跨窗口 localStorage 实时同步；主窗口收到后先落盘再切。
+  - 板视图在 `#view-list` 内与列表互斥显示，共用搜索栏与 status-hint；tabs / 置顶区 / 批量条在板视图隐藏。4 列 = 4 个状态分类，列头带计数，白卡片沿用 PaperMC 看板的「repo #num / 标题 / 标签 / 元数据行」层次。
+  - 横向溢出按需求保留：`#board-columns` 固定 232px 列宽不收缩，`#board-wrap` `overflow-x:auto` 出横向滚动条；两层滚动容器都换成自定义滚动条样式。
+  - 拖拽用 HTML5 DnD，drop 复用已有 `set_status` 命令（无需改 Rust）；拖回原列 / 非法列不发请求，靠 `board.js::dropStatus` 判定。
+  - 纯逻辑抽 `src/board.js`（groupByStatus / normalizeStatus / dropStatus）配 `tests/board.test.mjs` 5 个单测，fixture 全用通用示例。板视图一次渲染全量（后端上限 200 条），不套列表的触底续展。
+  - 验收：`npm test` 26/26 通过、三个 JS `node --check` 通过、cargo check + clippy --all-targets -D warnings 零代码警告、grep 确认落地。
+  - 待主人目视确认：看板风格还原度、窗口过小时横向滚动条能否向右滑、拖放高亮与手感、白卡片在半透明底色上的对比。
+- [x] **T3 列表视图记忆程序关闭时所在分类，重启直接切回**（完成 2026-11-07 @worktree/viewmode）
+  - `pickDefaultStatus()` 优先读 `ghr.settings.lastStatus`，用 `STATUS_KEYS`（5 个合法分类）校验；脏值 / 首次使用才回退原逻辑（有未读→未读，其次处理中，否则全部）。仅启动时定一次，之后不抢用户手上选的 tab。
+  - 切 tab 时（仅列表视图）**即时**写 `lastStatus`，不挂关闭钩子：主窗口点关闭其实是隐藏到托盘、窗口不销毁，且强杀进程也该保住最后一次选择。
+  - 板视图下 tabs 隐藏天然不写；从板视图切回列表仍停在记忆的分类。
+  - 逻辑内联在 main.js（十行级，抽单测收益低），验收走全量回归 + grep 静态核对。
+  - 验收：`npm test` 26/26 通过、`node --check` 通过、cargo check + clippy --all-targets -D warnings 零代码警告、grep 确认 6 处落地。
+  - 待主人实测：列表视图切到某分类 → 托盘退出/重启 → 是否直接落在该分类。
+
 ## 里程碑
 - [x] M1 骨架：透明窗口 / 引导页 / 设置页 / 0.5s 上浮动画
 - [x] 窗口模式：默认贴桌面（WorkerW）+ 置顶开关
