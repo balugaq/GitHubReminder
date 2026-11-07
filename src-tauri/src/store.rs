@@ -70,7 +70,7 @@ pub struct Entity {
     // 供主界面搜索「author」用。旧存档没有该字段，serde 默认空串。
     pub author: String,
     // 「涉及」过这张卡的人：历次事件的 author + assignees，统一小写、去重、累积。
-    // 供搜索语法 @//用户名/ 判定「与谁有关」，比 author 更宽（含指派人）。
+    // 供搜索语法 @用户名 判定「与谁有关」，比 author 更宽（含指派人）。
     // 评论事件的 author 仍是 issue/pr 发起者（见 github.rs::poll_item），故不含评论者。
     pub people: Vec<String>,
 }

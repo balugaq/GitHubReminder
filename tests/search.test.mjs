@@ -111,3 +111,35 @@ test("空 author / 空 people 的旧卡片不崩", () => {
   assert.equal(S.searchEvents([legacy], "示例").length, 1);
   assert.deepEqual(plain(S.searchEvents([legacy], "@//octocat/")), []);
 });
+
+test("@用户名 可直接输入：关键词前后都能放，前导/尾随空格不影响", () => {
+  const after = S.parseQuery(" pr title @octocat ");
+  assert.deepEqual(plain(after.people), ["octocat"]);
+  assert.deepEqual(plain(after.terms), ["pr", "title"]);
+  const before = S.parseQuery("@octocat pr title");
+  assert.deepEqual(plain(before.people), ["octocat"]);
+  assert.deepEqual(plain(before.terms), ["pr", "title"]);
+  assert.deepEqual(plain(S.searchEvents([card({ title: "pr title" })], "pr title @octocat").map((e) => e.number)), [1]);
+  assert.deepEqual(plain(S.searchEvents([card()], "@octocat").map((e) => e.number)), [1]);
+});
+
+test("旧写法 @//用户名/ 继续兼容，未闭合的旧标记仍按普通文本处理", () => {
+  const q = S.parseQuery(" @//octocat/ pr title ");
+  assert.deepEqual(plain(q.people), ["octocat"]);
+  assert.deepEqual(plain(q.terms), ["pr", "title"]);
+  const unclosed = S.parseQuery("@//octocat pr title");
+  assert.deepEqual(plain(unclosed.people), []);
+  assert.ok(plain(unclosed.terms).includes("@//octocat"));
+});
+
+test("邮箱 / 标题中间的 @ 不误判为人名", () => {
+  const q = S.parseQuery("foo@example.com pr title");
+  assert.deepEqual(plain(q.people), []);
+  assert.ok(plain(q.terms).includes("foo@example.com"));
+  assert.deepEqual(plain(S.searchEvents([card()], "foo@example.com")), []);
+});
+
+test("新旧写法混用时多个人名仍是 AND", () => {
+  const list = [card(), card({ number: 2, people: ["octocat"] })];
+  assert.deepEqual(plain(S.searchEvents(list, "@octocat @//hubot/").map((e) => e.number)), [1]);
+});

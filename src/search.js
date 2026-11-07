@@ -2,25 +2,27 @@
 // Node 单测用 vm 沙箱直接加载同一份源码，保证测的就是线上跑的那份。
 //
 // 查询语法：
-//   "pr title"                 → 标题或作者里同时含 pr / title（分词 AND，忽略大小写）
-//   "@//octocat/ pr title"     → 先限定「涉及 octocat」的通知，再在其上按关键词筛
-//   "@//octocat/ @//hubot/"    → 多个人名都要涉及（AND）
+//   "pr title"           → 标题或作者里同时含 pr / title（分词 AND，忽略大小写）
+//   "@octocat pr title"  → 先限定「涉及 octocat」的通知，再在其上按关键词筛
+//   "pr title @octocat"  → 同上，@用户名 可放在关键词任意位置
+//   "@//octocat/"        → 旧写法，保留兼容
 //
 // 「涉及」= 该卡片的发起者或指派人（后端 Entity.people 累积，统一小写）；
 // 普通关键词只匹配「标题 + author」，不含指派人——两者语义刻意区分，
-// 否则 @//用户名/ 就只是普通搜索的别名了。
+// 否则 @用户名 就只是普通搜索的别名了。「涉及的人」按设计不含评论者。
 (function (root) {
   "use strict";
 
-  // GitHub login 只允许字母数字与连字符；末尾的 / 是语法分隔符
-  var MENTION_RE = /@\/\/([A-Za-z0-9][A-Za-z0-9-]*)\//g;
+  // 词首的 @用户名 才是「涉及某人」；@//用户名/ 是旧写法，仍要求结尾斜杠。
+  // 前后都卡空白/首尾，避免把 foo@example.com 之类的文本误判成人名。
+  var MENTION_RE = /(?:^|\s)@(?:\/\/([A-Za-z0-9][A-Za-z0-9-]*)\/|([A-Za-z0-9][A-Za-z0-9-]*))(?=\s|$)/g;
 
   function parseQuery(raw) {
     var text = String(raw == null ? "" : raw);
     var people = [];
     // 标记整体从关键词里摘掉，替换成空格，避免剩下的词粘在一起
-    var rest = text.replace(MENTION_RE, function (_, name) {
-      var n = name.toLowerCase();
+    var rest = text.replace(MENTION_RE, function (_, legacy, modern) {
+      var n = (legacy || modern).toLowerCase();
       if (people.indexOf(n) === -1) people.push(n);
       return " ";
     });

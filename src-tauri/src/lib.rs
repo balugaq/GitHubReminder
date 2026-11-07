@@ -608,7 +608,7 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 const MAX_ENTITIES: usize = 200;
 
 // 把某条事件里出现的人并进实体的 people（统一小写、去重）。GitHub login 大小写不敏感，
-// 统一小写既能避免 "Octocat"/"octocat" 重复，也让前端 @//用户名/ 直接做字符串比较。
+// 统一小写既能避免 "Octocat"/"octocat" 重复，也让前端 @用户名 直接做字符串比较。
 fn merge_people(target: &mut Vec<String>, ev: &github::Event) {
     for p in std::iter::once(&ev.author).chain(ev.assignees.iter()) {
         let name = p.trim().to_lowercase();
