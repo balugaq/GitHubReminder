@@ -181,7 +181,11 @@
   - 多选状态下右键菜单其余项（状态/置顶/删除）行为不变。
   - 验收：`npm test` 全过、`node --check`、grep 静态核对；视觉待主人目视确认。
 
-- [ ] **T4 多选「复制链接」改为按选择顺序复制通知文本**（依赖 T3）
+- [x] **T4 多选「复制链接」改为按选择顺序复制通知文本**（完成 2026-11-13 @worktree/nov13）
+  - `batch.js` 新增纯函数 `orderedNoticeKeys(selection, events, keyOf)`：按 Set 插入顺序还原 `{repo, number}` 列表，剪掉轮询/删除后失效的选中项；`keyOf` 由调用方传 `entityKey`，避免复制一份键规则导致漂移。`tests/batch.test.mjs` 加 3 个单测。
+  - `main.js` 右键菜单项随状态切换「复制链接 / 复制所选通知」：多选时 invoke `format_selected_notices` 拿文案写剪贴板并提示条数；非多选仍复制单卡 url；空选集提示「没有可复制的通知」。
+  - 复制结果与 QQ 推送同源（`notice::format_selected`）：**无大标题、无项目标题，仅保留小通知块之间的空行**。
+  - 验收：`node --check`（main.js / batch.js）、`npm test` 29/29、grep 确认落地、`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告。复制结果待主人实测。
   - 多选状态下点「复制链接」→ 按 `selectedKeys` 顺序 invoke `format_selected_notices` → 写剪贴板；非多选状态仍复制单卡 url。
   - 验收：`npm test` 全过、grep 确认分支；复制结果待主人实测。
 

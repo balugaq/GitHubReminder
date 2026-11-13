@@ -58,7 +58,31 @@
     return out;
   }
 
-  const api = { normalize, buildBatch, buildUndo, captureUndo, restoreSelection };
+  // 多选复制：把选择顺序（Set 插入顺序）还原成后端的 NoticeKey 列表。
+  // keyOf 由调用方传入，避免在这里复制一份 entityKey 规则导致漂移。
+  function orderedNoticeKeys(selection, events, keyOf) {
+    const byKey = new Map();
+    for (const ev of Array.isArray(events) ? events : []) {
+      const key = keyOf(ev);
+      if (!byKey.has(key)) byKey.set(key, ev);
+    }
+    const out = [];
+    for (const key of Array.from(selection || [])) {
+      const ev = byKey.get(key);
+      if (!ev) continue; // 轮询/删除后失效的卡不该变成幽灵目标
+      out.push({ repo: ev.repo, number: ev.number ?? null });
+    }
+    return out;
+  }
+
+  const api = {
+    normalize,
+    buildBatch,
+    buildUndo,
+    captureUndo,
+    restoreSelection,
+    orderedNoticeKeys,
+  };
   root.GhrBatch = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

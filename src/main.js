@@ -712,9 +712,25 @@ function openContextMenu(ev, x, y) {
   const sep = document.createElement("div");
   sep.className = "ctx-sep";
   menu.appendChild(sep);
-  addCtxItem(menu, "复制链接", async () => {
-    const ok = await copyText(ev.url);
-    flash(ok ? "已复制链接" : "复制失败");
+  // 多选状态下复制的是选中通知的文案（QQ 通知格式，去掉大标题与项目标题），顺序即选择顺序
+  addCtxItem(menu, multiSelect ? "复制所选通知" : "复制链接", async () => {
+    if (!multiSelect) {
+      const ok = await copyText(ev.url);
+      flash(ok ? "已复制链接" : "复制失败");
+      return;
+    }
+    const keys = BATCH.orderedNoticeKeys(selectedKeys, allEvents, entityKey);
+    if (keys.length === 0) {
+      flash("没有可复制的通知");
+      return;
+    }
+    try {
+      const text = await invoke("format_selected_notices", { keys });
+      const ok = await copyText(text);
+      flash(ok ? `已复制 ${keys.length} 条通知` : "复制失败");
+    } catch (err) {
+      flash(typeof err === "string" ? err : "复制失败");
+    }
   });
   addCtxItem(menu, "删除", () => deleteEntity(ev), { danger: true });
 

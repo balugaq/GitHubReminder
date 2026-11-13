@@ -102,3 +102,38 @@ test("restoreSelection 空现场 / 空有效集合返回空数组", () => {
   assert.deepEqual(plain(B.restoreSelection(["owner/repo#1"], null)), []);
   assert.deepEqual(plain(B.captureUndo(null, null).selection), []);
 });
+
+// ---- 多选复制：按选择顺序还原后端 NoticeKey ----
+// vm 沙箱里的对象原型与主 realm 不同，deepEqual 前先做一次 JSON 归一化
+const normKeys = (v) => JSON.parse(JSON.stringify(Array.from(v)));
+
+test("orderedNoticeKeys 保持 Set 的选择顺序", () => {
+  const keyOf = (ev) => `o/r:${ev.number}`;
+  const events = [
+    { repo: "o/r", number: 1 },
+    { repo: "o/r", number: 2 },
+    { repo: "o/r", number: 3 },
+  ];
+  const selection = new Set(["o/r:3", "o/r:1", "o/r:2"]);
+  assert.deepEqual(normKeys(B.orderedNoticeKeys(selection, events, keyOf)), [
+    { repo: "o/r", number: 3 },
+    { repo: "o/r", number: 1 },
+    { repo: "o/r", number: 2 },
+  ]);
+});
+
+test("orderedNoticeKeys 跳过失效选中项并保留空编号", () => {
+  const keyOf = (ev) => `o/r:${ev.number ?? ""}`;
+  const events = [{ repo: "o/r", number: 2 }, { repo: "o/r", number: null }];
+  const selection = new Set(["o/r:9", "o/r:2", "o/r:"]);
+  assert.deepEqual(normKeys(B.orderedNoticeKeys(selection, events, keyOf)), [
+    { repo: "o/r", number: 2 },
+    { repo: "o/r", number: null },
+  ]);
+});
+
+test("orderedNoticeKeys 空输入返回空数组", () => {
+  const keyOf = (ev) => String(ev.number);
+  assert.deepEqual(normKeys(B.orderedNoticeKeys(new Set(), [], keyOf)), []);
+  assert.deepEqual(normKeys(B.orderedNoticeKeys(null, null, keyOf)), []);
+});
