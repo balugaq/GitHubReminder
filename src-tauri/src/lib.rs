@@ -29,6 +29,9 @@ pub struct AppState {
     relay: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     // 上次窗口位置落盘时刻（毫秒），拖动/拉伸高频触发靠它节流
     last_win_save: Mutex<u64>,
+    // 主窗口前端是否已执行到 main.js：开机早期 WebView2 偶发停在错误页，
+    // 没上报时由启动守护自动重载，上报后即停止重试。
+    frontend_ready: AtomicBool,
 }
 
 impl AppState {
@@ -1066,6 +1069,44 @@ fn set_pin(
     }
 }
 
+// ---- 开机启动自愈 ---------------------------------------------------------
+// main.js 一旦执行就上报：说明 HTML/JS 已正常加载，而不是 WebView2 的错误页。
+#[tauri::command]
+fn report_frontend_ready(state: tauri::State<Arc<AppState>>) {
+    state.frontend_ready.store(true, Ordering::Relaxed);
+}
+
+// 开机自启时桌面 shell / WebView2 运行时可能比窗口创建更慢，首屏会停在
+// 「无法显示当前界面」且不会自动重试。这里做有限次重载兜底：每轮重新计时，
+// 一旦前端上报就绪立刻收手，避免正常启动时无谓刷新或无限 reload 循环。
+fn spawn_frontend_ready_guard(handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        const WAITS: [u64; 3] = [6, 10, 14];
+        for (i, wait) in WAITS.iter().enumerate() {
+            tokio::time::sleep(std::time::Duration::from_secs(*wait)).await;
+            let ready = handle
+                .state::<Arc<AppState>>()
+                .frontend_ready
+                .load(Ordering::Relaxed);
+            if ready {
+                println!("[startup] 主窗口前端已就绪，无需重载");
+                return;
+            }
+            if let Some(w) = handle.get_webview_window("main") {
+                println!(
+                    "[startup] 主窗口前端未就绪，重载 ({}/{})",
+                    i + 1,
+                    WAITS.len()
+                );
+                if let Err(e) = w.reload() {
+                    eprintln!("[startup] 主窗口重载失败: {e}");
+                }
+            }
+        }
+        println!("[startup] 重载重试已耗尽，前端仍未就绪，需手动重启应用");
+    });
+}
+
 // ---- 项目外观 / bot 关键词 / 统计窗口 -------------------------------------
 // 已知项目 = 监听过的仓库 + 现有通知 + 统计流水；缺样式的在读取时补齐并落盘，
 // 保证饼图颜色和设置页列表永远对得上。
@@ -1275,6 +1316,7 @@ pub fn run() {
                 notified: Mutex::new(HashSet::new()),
                 relay: Mutex::new(None),
                 last_win_save: Mutex::new(0),
+                frontend_ready: AtomicBool::new(false),
             });
             // 自动配置开着且配置齐全的话，启动内置 QQ 中转服务
             restart_relay(&state);
@@ -1292,6 +1334,8 @@ pub fn run() {
             spawn_visibility_guard(app.handle().clone());
             setup_tray(app)?;
             app.manage(state);
+            // 必须在 manage 之后启动：守护任务会读 AppState
+            spawn_frontend_ready_guard(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1323,6 +1367,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             winembed::set_window_mode,
             winembed::user_minimize,
+            report_frontend_ready,
             get_config,
             set_token,
             set_proxy,

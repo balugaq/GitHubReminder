@@ -216,7 +216,11 @@
   - 验收：`node --check` 三文件通过、`npm test` 41/41、`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告、`cargo test --lib` 49/49、暂存敏感信息命中 0 条。**设置页布局与卡片文字配色待主人在 `npm run tauri dev` 下目视确认**。
 
 ### P3
-- [ ] **T8 开机 zstart.bat 启动 WebView 显示失败：利弊分析 + 最小改动自愈**（独立）
-  - 讨论「启动时机 / 启动方式 / WebView 检查」三条路线并给结论（写入本条完成说明）。
-  - 落地：`zstart.bat` 等桌面/网络栈就绪再拉起；应用侧加「前端就绪上报 + 延时检查，未就绪自动 reload」兜底，覆盖延迟猜不准的残余场景。不动启动方式（保持 `tauri dev` 迭代节奏）。
-  - 验收：cargo check + clippy 零警告、grep 确认落地；开机实测待主人确认。
+- [x] **T8 开机 zstart.bat 启动 WebView 显示失败：利弊分析 + 最小改动自愈**（独立）
+  - **根因判断**：开机自启脚本调用 `zstart.bat` 时，窗口在桌面 shell（explorer）/ WebView2 运行时就绪之前就被创建。本项目默认贴桌面，`winembed.rs` 要等 explorer 分裂出壁纸层 WorkerW，WebView2 也依赖用户会话初始化；导航失败后 WebView2 停在「无法显示当前界面」错误页，**不会自行重试**，所以一次撞上就一直错，等系统完全起来再打开才正常。注意 `tauri.conf.json` 只有 `frontendDist: "../src"`（静态目录），没有 `devUrl` / `beforeDevCommand`，所以**不是 vite dev server 未就绪**，换打包 exe 也消不掉这个竞态。
+  - **① 改启动时机**：利——只动一个 bat、不动应用，正好对准 shell / WorkerW / WebView2 的就绪顺序，不引入依赖。弊——延迟是猜的，机器负载不同会失准；`tasklist` 只能判 explorer，判不了 WebView2 是否真可用；且**没有失败反馈**，这一轮若仍撞上错误页，页面自己不会恢复。→ 采用，但只做「探活等就绪 + 短缓冲」，不用固定长 sleep，并必须配兜底。
+  - **② 改启动方式（打包 exe / 任务计划 / 换自启机制）**：利——少掉 npm / Tauri CLI 装配，任务计划程序可设「登录后延迟 + 失败重启」，比 bat 更可控。弊——改动最大，要引入打包发布流程、丢掉 `tauri dev` 即改即看的迭代节奏；本就不依赖 dev server，能消掉的只有 npm / CLI 那一小段，WebView2 与 shell 的就绪问题依旧存在，只是窗口创建得稍晚。→ 本轮不动，保持 `npm run tauri dev`。
+  - **③ 改 WebView 检查（应用侧自愈）**：利——唯一能闭环「延迟猜不准」的方案，只看结果不看原因：前端脚本跑起来 = 文档加载成功，没跑起来 = 停在错误页，重载同一 URL 即可（Tauri 2.12.5 的 `WebviewWindow::reload()` 会重新导航并重跑初始化脚本）；开机竞态、WebView2 初始化抖动、偶发导航失败都能覆盖，正常启动零副作用。弊——要动 Rust；必须设重试上限，否则永久失败时会无限 reload；若 WebView2 整个没起来（连窗口都空白），reload 也救不了，仍需 ①。→ 采用，作为 ① 的兜底。
+  - **结论（最小改动组合）= ① + ③，不动 ②**：脚本层把失败概率压低，应用层把残余失败闭环，合计 3 个文件、约 60 行，不动启动方式与开发节奏。
+  - 落地：`zstart.bat` 先 `cd /d "%~dp0"`（外部脚本调过来时工作目录不一定是项目目录），最多 60 轮探 `explorer.exe`（每轮约 1s），就绪后再给约 3s 缓冲，最后仍 `call npm run tauri dev`；行尾用 CRLF 避免 cmd 解析 label / goto 的兼容问题。`lib.rs` 加 `AppState.frontend_ready: AtomicBool` + `report_frontend_ready` command + `spawn_frontend_ready_guard`（6/10/14s 三段检查，只在未就绪时 `w.reload()`，最多 3 次，收到上报立即收手，且必须在 `app.manage(state)` 之后启动）。`main.js` 顶层一行 `invoke("report_frontend_ready")`：脚本能执行即代表文档已加载，不必等 init 跑完，业务初始化异常也不会触发无意义刷新。
+  - 验收：`node --check` 通过、`npm test` 41/41、`cargo check` 通过、`cargo clippy --all-targets -- -D warnings` 零代码警告（首跑撞到共享 target 目录偶发 `os error 5` 资源写权限错误，重跑 `PIPESTATUS=0` 通过）、`cargo test --lib` 49/49、暂存敏感信息命中 0 条。**开机冷启动实测待主人确认**。

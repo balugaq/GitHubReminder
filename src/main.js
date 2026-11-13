@@ -4,6 +4,11 @@ const { getCurrentWindow } = window.__TAURI__.window;
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
+// 开机自启早期 WebView2 可能停在「无法显示当前界面」错误页：只要本脚本执行到，
+// 就说明 HTML/JS 已正常加载，立刻告诉后端停止重载守护（见 spawn_frontend_ready_guard）。
+// 用最顶层上报而不是等 init 跑完，业务初始化若失败也不至于触发无意义的刷新。
+invoke("report_frontend_ready").catch(() => {});
+
 // 项目外观纯逻辑（设置页与主窗口共用）；落地的样式 map 由后端全量下发
 const PROJECT = window.GhrProject;
 let projectStyles = {};
