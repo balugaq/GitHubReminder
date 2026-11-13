@@ -45,7 +45,7 @@
 ## 4. 已知项目约束（速查）
 
 - Rust 工具链不在 Git Bash PATH：`export PATH="$(cygpath -u "$USERPROFILE")/.cargo/bin:$PATH"`。
-- `.cargo/config.toml` 仍把 target-dir 指向 `D:/github_clone/.cargo-target-GitHubReminder`（原为多 worktree 共用；单分支下保留是为了复用已有编译缓存，避免首次全量重编译），单分支下不存在并发编译排队。
+- `.cargo/config.toml` 用固定绝对 target-dir（值见该文件）复用编译缓存，原为多 worktree 共用；单分支下保留只是避免首次全量重编译，不存在并发编译排队。
 - 主人 `tauri dev` 运行中时 cargo 会撞编译锁（os error 5），编译前确认或轮询等待。
 - 删除大体积构建产物（target 等）时，Windows 安全删除钩子对大目录整树删除会失败（trash 失败即拒绝），需先清零文件内容再删，或交主人手动 `rmdir /s /q`。
 - 本机访问 GitHub API 依赖 Watt Toolkit MITM + native-tls + 强制 IPv4，勿动这三层。

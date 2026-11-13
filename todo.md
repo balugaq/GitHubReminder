@@ -245,4 +245,4 @@
   - `AGENTS.md`：文首加开发模式声明；§2 整节由「Git Worktree 并行规范」改写为「单分支开发规范（master）」（不建 worktree / 任务分支、不合并、开工前查工作区、有主人 WIP 停下问、将来要并行须主人同意）；§1.3 认领示例去掉 worktree 分支名改 `@master`，目的改为「多会话共用同一工作区靠 todo.md 互斥」；§3 首句由「合并进 master 必须满足」改为「任务完成、提交前必须满足」；§4 共享 target-dir 一条改写为单分支下的缓存复用说明；§5.1 删掉对已不存在的 §2.2 的引用。
   - `.cargo/config.toml` 注释去掉「所有 worktree 共用」表述（配置项本身保留，避免首次全量重编译）；`docs/HANDOFF.md` 构建章节补一句开发模式与 `AGENTS.md` 指向；`README.md` / `PLAN.md` 无相关表述，未改。
   - 顺带根治历史大坑：旧 §2.2「先删分支再删 worktree」顺序错误两天内踩了 2 次，worktree 机制移除后该坑不复存在。
-  - 验收：grep 全仓复核——AGENTS.md 仅剩「不再使用 / 不自行引入」这类说明性提及，创建与合并流程 0 处；`.cargo/config.toml` 与 `docs/HANDOFF.md` 零残留；todo.md 仅历史条目保留。本地 `git branch` 只剩 master、工作区干净。本任务不涉代码，未跑 cargo / npm test。暂存敏感信息检查 4 个文件、无命中。**未 push、未碰远程**；远端遗留 `origin/worktree/m6-manage` 分支按红线不动，交主人决定。
+  - 验收：grep 全仓复核——AGENTS.md 仅剩「不再使用 / 不自行引入」这类说明性提及，创建与合并流程 0 处；`.cargo/config.toml` 与 `docs/HANDOFF.md` 零残留；todo.md 仅历史条目保留。本地 `git branch` 只剩 master、工作区干净。本任务不涉代码，仍按 §3 跑回归：`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告、`npm test` 46/46。敏感信息检查 4 个文件无凭据 / 真实身份 / 业务数据，本机构建路径已收敛为不写具体值。**未 push、未碰远程**；远端遗留 `origin/worktree/m6-manage` 分支按红线不动，交主人决定。
