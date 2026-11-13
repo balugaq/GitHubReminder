@@ -4,6 +4,10 @@ const { getCurrentWindow } = window.__TAURI__.window;
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
+// 项目外观纯逻辑（设置页与主窗口共用）；落地的样式 map 由后端全量下发
+const PROJECT = window.GhrProject;
+let projectStyles = {};
+
 const STORAGE_KEY = "ghr.settings";
 
 function loadSettings() {
@@ -130,6 +134,14 @@ function entityKey(ev) {
   return `${(ev.repo || "").toLowerCase()}:${ev.number ?? ""}`;
 }
 
+// 项目文字色只落在卡片自己的 CSS 变量上：没配色的项目继续走全局 --text，
+// 列表 / 置顶 / 板视图三类卡片共用，避免各写一份导致口径漂移。
+function applyProjectText(card, ev) {
+  const color = PROJECT.textColorOf(projectStyles, ev.repo);
+  if (color) card.style.setProperty("--project-text", color);
+  else card.style.removeProperty("--project-text");
+}
+
 // 卡片交互：点开链接（未读自动转已读）+ 右键菜单
 function bindCard(card, ev) {
   card.addEventListener("click", (e) => {
@@ -173,6 +185,7 @@ function buildCard(ev) {
     (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
   // 作者可搜但卡片布局里不展示，hover 给个轻量提示，便于核对搜索命中原因
   if (ev.author) card.title = `作者: ${ev.author}`;
+  applyProjectText(card, ev);
   bindCard(card, ev);
   card.querySelector(".event-check").addEventListener("click", (e) => {
     // 勾选框不能触发 <a> 的打开链接
@@ -198,6 +211,7 @@ function buildPinnedCard(ev) {
   card.querySelector(".pinned-repo").textContent =
     ev.repo + (ev.number != null ? ` #${ev.number}` : "");
   card.querySelector(".pinned-title").textContent = ev.title;
+  applyProjectText(card, ev);
   bindCard(card, ev);
   return card;
 }
@@ -357,6 +371,7 @@ function buildBoardCard(ev) {
     (LAST_EVENT_LABEL[ev.lastEventKind] || ev.lastEventKind || "") +
     (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
   if (ev.author) card.title = `作者: ${ev.author}`;
+  applyProjectText(card, ev);
   bindCard(card, ev);
   card.querySelector(".board-check").addEventListener("click", (e) => {
     // 勾选框不能触发 <a> 的打开链接，也不能冒泡到卡片再 toggle 一次
@@ -786,7 +801,7 @@ const CHART_CX = 260;
 const CHART_CY = 160;
 const CHART_R = 100;
 let statsRanges = null;
-let projectStyles = {};
+// projectStyles 在文件顶部统一声明：统计饼图与三类卡片共用同一份
 let activeRange = "today";
 let chartType = "pie"; // "pie" | "bar"，切换后沿用同一个时间窗口
 
@@ -1062,6 +1077,16 @@ function applyWindowMode() {
   });
 }
 
+// 启动时拉一次全量项目外观；缺失项目由后端在读取时自动补色并落盘
+async function loadProjectStyles() {
+  try {
+    projectStyles = await invoke("get_project_styles");
+  } catch (err) {
+    console.warn("读取项目外观失败:", err);
+    projectStyles = {};
+  }
+}
+
 // ---- 初始化 ----
 (async function init() {
   // 事件监听最先注册：首轮轮询 1s 后就可能 emit，等前面几个 await 跑完再注册会漏掉整批事件
@@ -1071,10 +1096,11 @@ function applyWindowMode() {
 
   try {
     await refreshConfig();
+    await loadProjectStyles();
   } catch (e) {
     console.warn("读取配置失败:", e);
   }
-  // 重启后从后端拉持久化通知，读态不丢
+  // 重启后从后端拉持久化通知，读态不丢；卡片渲染前样式必须已就位
   await loadEvents();
   pickDefaultStatus();
   goDefaultView();
@@ -1131,6 +1157,13 @@ function applyWindowMode() {
 
   // 管理窗口改了外观，实时同步主窗口
   listen("ghr-appearance", () => applyAppearance());
+
+  // 项目颜色 / 文字色：随事件带全量 map，卡片与统计页共用同一份状态
+  listen("ghr-project-styles", (e) => {
+    projectStyles = e.payload || {};
+    renderFeed();
+    if (!document.getElementById("view-stats").classList.contains("hidden")) renderChart();
+  });
 
   // 视图模式：值随事件带过来，主窗口先落盘再切，重启后 loadSettings 还能读到
   listen("ghr-view-mode", (e) => {

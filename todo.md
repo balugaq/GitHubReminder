@@ -209,10 +209,11 @@
   - 统计页加「饼图 / 柱状图」切换按钮，柱状图沿用同一份窗口数据与项目色。
   - 验收：`npm test` 全过、grep 确认落地；视觉待主人目视确认。
 
-- [ ] **T7 设置：项目颜色 / 文字颜色可改 + 通知界面应用文字色**（依赖 T1）
-  - `manage.html` 设置页加「bot 关键词」输入（逗号分隔）+ 项目样式列表（每行项目名 + 颜色选择器 + 文字颜色选择器）。
-  - `manage.js` 读写新命令，改完 emit 同步主窗口；`main.js` 卡片按 `repo` 应用项目文字颜色（列表卡、板卡、置顶卡）。
-  - 验收：`npm test` 全过、`node --check`、clippy 零警告；视觉待主人目视确认。
+- [x] **T7 设置：项目颜色 / 文字颜色可改 + 通知界面应用文字色**（依赖 T1）
+  - 原计划：设置页加「bot 关键词」输入（逗号分隔）+ 项目样式列表（每行项目名 + 颜色选择器 + 文字颜色选择器），改完 emit 同步主窗口，卡片按 `repo` 应用文字色。
+  - 实现（2026-11-13）：bot 关键词改用「输入后回车/点添加 + 可删除标签」而非逗号分隔框，逐个增删更直观；客户端去重/大小写口径与后端 `set_bot_keywords` 一致。新增纯逻辑模块 `src/project.js`（`normalizeKeywords` / `pickStyle` / `textColorOf` / `projectColorOf` / `sortedRepos`，含脏色值回退与旧存档大小写兜底）+ `tests/project.test.mjs` 5 个单测，两个窗口都引入。
+  - `manage.js` 接 `get_bot_keywords` / `set_bot_keywords` / `get_project_styles` / `set_project_style`；项目色/文字色整包提交，后端只覆盖非空值，改完 `emit("ghr-project-styles", 全量 map)`。主窗口启动时先 `await loadProjectStyles()` 再渲染，收到事件后整体替换并重绘卡片与统计页。文字色通过卡片上的 `--project-text` CSS 变量落到列表卡 / 板卡 / 置顶卡（含板卡 meta / sub / kind 的硬编码白字），未配置回退全局 `--text`。
+  - 验收：`node --check` 三文件通过、`npm test` 41/41、`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告、`cargo test --lib` 49/49、暂存敏感信息命中 0 条。**设置页布局与卡片文字配色待主人在 `npm run tauri dev` 下目视确认**。
 
 ### P3
 - [ ] **T8 开机 zstart.bat 启动 WebView 显示失败：利弊分析 + 最小改动自愈**（独立）

@@ -697,6 +697,153 @@ document.getElementById("input-topmost").addEventListener("change", (e) => {
   );
 });
 
+// ---- Bot 关键词 + 项目外观（后端 Config，改动后 emit 给主窗口实时生效） ----
+const PROJECT = window.GhrProject;
+let botKeywords = [];
+let projectStyles = {};
+
+function renderBotKeywords() {
+  const box = document.getElementById("bot-keyword-list");
+  box.innerHTML = "";
+  if (botKeywords.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "kw-empty";
+    empty.textContent = "暂无关键词，bot 通知不会被折叠";
+    box.appendChild(empty);
+    return;
+  }
+  for (const word of botKeywords) {
+    const chip = document.createElement("span");
+    chip.className = "kw-chip";
+    const label = document.createElement("span");
+    label.textContent = word;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.textContent = "×";
+    del.title = "移除该关键词";
+    del.addEventListener("click", () => {
+      saveBotKeywords(botKeywords.filter((w) => w !== word));
+    });
+    chip.append(label, del);
+    box.appendChild(chip);
+  }
+}
+
+// 后端返回的是清洗后的完整列表，界面以此为准，避免本地状态与落盘不一致
+async function saveBotKeywords(list) {
+  try {
+    const next = await invoke("set_bot_keywords", {
+      keywords: PROJECT.normalizeKeywords(list),
+    });
+    botKeywords = PROJECT.normalizeKeywords(next);
+  } catch (err) {
+    alert("保存 bot 关键词失败：" + err);
+  }
+  renderBotKeywords();
+}
+
+function addBotKeyword() {
+  const input = document.getElementById("input-bot-keyword");
+  const word = input.value.trim();
+  if (!word) return;
+  const next = PROJECT.normalizeKeywords([...botKeywords, word]);
+  input.value = "";
+  if (next.length === botKeywords.length) return; // 已存在，忽略
+  saveBotKeywords(next);
+}
+
+document.getElementById("btn-add-bot-keyword").addEventListener("click", addBotKeyword);
+document.getElementById("input-bot-keyword").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  addBotKeyword();
+});
+
+function renderProjectStyles() {
+  const box = document.getElementById("project-style-list");
+  box.innerHTML = "";
+  const repos = PROJECT.sortedRepos(projectStyles);
+  document.getElementById("project-style-empty").classList.toggle("hidden", repos.length > 0);
+  for (const repo of repos) {
+    const style = projectStyles[repo] || {};
+    const row = document.createElement("div");
+    row.className = "proj-row";
+
+    const dot = document.createElement("span");
+    dot.className = "proj-dot";
+    dot.style.background = PROJECT.projectColorOf(projectStyles, repo);
+
+    const name = document.createElement("span");
+    name.className = "proj-name";
+    name.textContent = repo;
+    name.title = repo;
+
+    const preview = document.createElement("span");
+    preview.className = "proj-preview";
+    preview.textContent = "示例文字";
+    preview.style.color = PROJECT.textColorOf(projectStyles, repo) || "#e8eaf0";
+
+    // 两个字段整包提交：后端只覆盖非空值，避免只传一个时把另一个重置
+    const mkPicker = (caption, field, fallback) => {
+      const label = document.createElement("label");
+      label.className = "proj-picker";
+      label.textContent = caption;
+      const input = document.createElement("input");
+      input.type = "color";
+      input.value = PROJECT.isHexColor(style[field]) ? style[field] : fallback;
+      input.title = `${caption} · ${repo}`;
+      input.addEventListener("change", (e) => {
+        const current = projectStyles[repo] || {};
+        const args = {
+          repo,
+          color: PROJECT.isHexColor(current.color) ? current.color : null,
+          textColor: PROJECT.isHexColor(current.textColor) ? current.textColor : null,
+        };
+        args[field] = e.target.value;
+        saveProjectStyle(args);
+      });
+      label.appendChild(input);
+      return label;
+    };
+
+    row.append(
+      dot,
+      name,
+      mkPicker("项目色", "color", "#26c281"),
+      mkPicker("文字色", "textColor", "#ffffff"),
+      preview
+    );
+    box.appendChild(row);
+  }
+}
+
+async function saveProjectStyle(args) {
+  try {
+    projectStyles = await invoke("set_project_style", args);
+  } catch (err) {
+    alert("保存项目外观失败：" + err);
+    return;
+  }
+  emit("ghr-project-styles", projectStyles).catch(() => {});
+  renderProjectStyles();
+}
+
+async function loadAppearanceSettings() {
+  try {
+    [botKeywords, projectStyles] = await Promise.all([
+      invoke("get_bot_keywords"),
+      invoke("get_project_styles"),
+    ]);
+  } catch (err) {
+    console.warn("读取项目设置失败:", err);
+    botKeywords = [];
+    projectStyles = {};
+  }
+  botKeywords = PROJECT.normalizeKeywords(botKeywords);
+  renderBotKeywords();
+  renderProjectStyles();
+}
+
 // ---- 窗口控制 ----
 document.getElementById("btn-min").addEventListener("click", () => getCurrentWindow().minimize());
 document.getElementById("btn-close").addEventListener("click", () => getCurrentWindow().close());
@@ -710,6 +857,7 @@ document.getElementById("btn-close").addEventListener("click", () => getCurrentW
     console.warn("读取配置失败:", e);
   }
   updateTokenState();
+  await loadAppearanceSettings();
   try {
     document.getElementById("input-autostart").checked = await invoke("get_autostart");
   } catch {
@@ -728,5 +876,12 @@ document.getElementById("btn-close").addEventListener("click", () => getCurrentW
     await refreshConfig();
     render();
     updateTokenState();
+    // 新增监听会带来新项目，后端在读取时自动补色，这里重拉一次即可
+    try {
+      projectStyles = await invoke("get_project_styles");
+      renderProjectStyles();
+    } catch {
+      /* 项目外观刷新失败不影响监听列表 */
+    }
   });
 })();

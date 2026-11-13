@@ -135,6 +135,15 @@
           <p class="hint">用于判断通知是否指派给了你：填好后，QQ 推送里 assignee 含你的条目会带 [@me] 标记。</p>
         </div>
         <div class="form-row fade-up delay-1">
+          <label for="input-bot-keyword">Bot 关键词</label>
+          <div class="kw-row">
+            <input id="input-bot-keyword" type="text" placeholder="输入关键词后回车或点添加，例如 dependabot[bot]" />
+            <button id="btn-add-bot-keyword" class="btn-plain" type="button">添加</button>
+          </div>
+          <div id="bot-keyword-list" class="kw-list"></div>
+          <p class="hint">Issue / PR 发起者包含任一关键词时，该通知会被挪到所属项目 QQ 通知的最后。默认自带 <code>dependabot[bot]</code>，匹配不区分大小写。</p>
+        </div>
+        <div class="form-row fade-up delay-1">
           <label for="input-view-mode">通知视图模式</label>
           <select id="input-view-mode">
             <option value="list">列表视图</option>
@@ -149,6 +158,12 @@
         <div class="form-row fade-up delay-2">
           <label for="input-opacity">不透明度 <span id="opacity-val">70%</span></label>
           <input id="input-opacity" type="range" min="20" max="95" value="70" />
+        </div>
+        <div class="form-row fade-up delay-2">
+          <label>项目外观</label>
+          <p class="hint">「项目色」用于统计饼图 / 柱状图，「文字色」用于通知卡片里的文字；新监听项目会自动分配一个稳定的项目色。</p>
+          <div id="project-style-list" class="proj-list"></div>
+          <p id="project-style-empty" class="hint hidden">还没有项目，添加监听后这里会出现可配置的项目。</p>
         </div>
         <div class="form-row toggle-row fade-up delay-3">
           <label class="toggle-label" for="input-topmost">窗口置顶</label>
@@ -214,6 +229,7 @@
         </div>
       </div>
     </div>
+    <script src="project.js"></script>
     <script src="manage.js"></script>
   </body>
 </html>
