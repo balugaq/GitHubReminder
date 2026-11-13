@@ -551,7 +551,28 @@ button { font-family: inherit; }
   font-size: 12px;
   font-weight: 700;
 }
+.chart-toggle {
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.chart-toggle:hover { background: rgba(255, 255, 255, 0.24); }
 #chart-body { flex: 1; min-height: 0; }
+.chart-grid { stroke: rgba(255, 255, 255, 0.12); stroke-width: 1; }
+.chart-axis,
+.chart-bar-value,
+.chart-bar-label {
+  fill: rgba(255, 255, 255, 0.82);
+  font-size: 9px;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.chart-bar { cursor: pointer; transition: filter 0.18s ease; }
+.chart-bar.hovered { filter: brightness(1.18); }
 .chart-svg { width: 100%; height: 100%; display: block; }
 .chart-leader { fill: none; stroke: rgba(255, 255, 255, 0.42); stroke-width: 1; }
 .chart-label {

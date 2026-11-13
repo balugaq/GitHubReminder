@@ -69,3 +69,11 @@ test("barModel 给出最高柱与比例", () => {
   assert.equal(m.max, 6);
   assert.deepEqual(plain(m.bars.map((b) => b.ratio)), [1, 0.5]);
 });
+
+test("barModel 按 maxBars 截断，比例仍以最高柱为基准", () => {
+  const { slices } = C.summarize({ a: 9, b: 6, c: 3, d: 1 }, {});
+  const m = C.barModel(slices, 2);
+  assert.deepEqual(plain(m.bars.map((b) => b.repo)), ["a", "b"]);
+  assert.equal(m.max, 9);
+  assert.equal(m.bars[1].ratio, 6 / 9);
+});

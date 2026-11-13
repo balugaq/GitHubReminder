@@ -788,6 +788,7 @@ const CHART_R = 100;
 let statsRanges = null;
 let projectStyles = {};
 let activeRange = "today";
+let chartType = "pie"; // "pie" | "bar"，切换后沿用同一个时间窗口
 
 function svgEl(tag, attrs) {
   const el = document.createElementNS(SVG_NS, tag);
@@ -799,15 +800,25 @@ function hideChartTip() {
   document.getElementById("chart-tip").classList.add("hidden");
 }
 
-// hover 时沿半径外移 + 略微放大，右下角文本框给出项目 / 占比 / 总数
+function setChartTip(slice, total) {
+  const tip = document.getElementById("chart-tip");
+  tip.textContent = `${slice.repo}\nShare: ${(slice.share * 100).toFixed(2)}%\nTotal: ${total}`;
+  tip.classList.remove("hidden");
+}
+
+// 饼图 hover：沿半径外移 + 略微放大，右下角文本框给出项目 / 占比 / 总数
 function showChartTip(slice, path, total) {
   path.classList.add("hovered");
   const dx = (Math.cos(slice.angle) * 8).toFixed(2);
   const dy = (Math.sin(slice.angle) * 8).toFixed(2);
   path.style.transform = `translate(${dx}px, ${dy}px) scale(1.045)`;
-  const tip = document.getElementById("chart-tip");
-  tip.textContent = `${slice.repo}\nShare: ${(slice.share * 100).toFixed(2)}%\nTotal: ${total}`;
-  tip.classList.remove("hidden");
+  setChartTip(slice, total);
+}
+
+// 柱状图 hover 只提亮，不位移（柱子飘走会破坏基线对齐）
+function showBarTip(slice, rect, total) {
+  rect.classList.add("hovered");
+  setChartTip(slice, total);
 }
 
 function renderPie(slices, total) {
@@ -845,6 +856,75 @@ function renderPie(slices, total) {
   document.getElementById("chart-body").appendChild(svg);
 }
 
+const MAX_BARS = 12;
+
+function shortBarLabel(name) {
+  return name.length > 9 ? `${name.slice(0, 8)}…` : name;
+}
+
+// 柱状图沿用饼图的排序、配色与项目色，横轴按项目划分通知数量
+function renderBar(slices, total) {
+  const model = CHART.barModel(slices, MAX_BARS);
+  const left = 40;
+  const right = 12;
+  const top = 24;
+  const base = 272;
+  const plotW = CHART_W - left - right;
+  const plotH = base - top;
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${CHART_W} ${CHART_H}`,
+    class: "chart-svg",
+  });
+  for (const frac of [0, 0.5, 1]) {
+    const y = base - frac * plotH;
+    svg.appendChild(svgEl("line", {
+      x1: left, y1: y, x2: CHART_W - right, y2: y, class: "chart-grid",
+    }));
+    const tick = svgEl("text", {
+      x: left - 6, y: y + 3, "text-anchor": "end", class: "chart-axis",
+    });
+    tick.textContent = String(Math.round(model.max * frac));
+    svg.appendChild(tick);
+  }
+  const step = plotW / Math.max(model.bars.length, 1);
+  const barW = Math.min(52, step - 10);
+  model.bars.forEach((bar, i) => {
+    const cx = left + step * i + step / 2;
+    const h = bar.ratio * plotH;
+    const rect = svgEl("rect", {
+      x: cx - barW / 2,
+      y: base - h,
+      width: barW,
+      height: Math.max(h, 1),
+      rx: 3,
+      fill: bar.color,
+      class: "chart-bar",
+    });
+    const slice = slices[i];
+    rect.addEventListener("mouseenter", () => showBarTip(slice, rect, total));
+    rect.addEventListener("mouseleave", () => {
+      rect.classList.remove("hovered");
+      hideChartTip();
+    });
+    svg.appendChild(rect);
+    const value = svgEl("text", {
+      x: cx, y: base - h - 5, "text-anchor": "middle", class: "chart-bar-value",
+    });
+    value.textContent = String(bar.count);
+    svg.appendChild(value);
+    const label = svgEl("text", {
+      x: cx, y: base + 14, "text-anchor": "end", class: "chart-bar-label",
+      transform: `rotate(-35 ${cx} ${base + 14})`,
+    });
+    label.textContent = shortBarLabel(bar.name);
+    svg.appendChild(label);
+  });
+  if (slices.length > MAX_BARS) {
+    document.getElementById("chart-title").textContent += ` · 仅显示前 ${MAX_BARS} 个项目`;
+  }
+  document.getElementById("chart-body").appendChild(svg);
+}
+
 function renderChart() {
   const counts = (statsRanges && statsRanges[activeRange]) || {};
   const { total, slices } = CHART.summarize(counts, projectStyles);
@@ -854,7 +934,10 @@ function renderChart() {
   body.innerHTML = "";
   hideChartTip();
   document.getElementById("chart-empty").classList.toggle("hidden", total > 0);
-  if (total > 0) renderPie(slices, total);
+  if (total > 0) {
+    if (chartType === "bar") renderBar(slices, total);
+    else renderPie(slices, total);
+  }
 }
 
 async function openStats() {
@@ -882,6 +965,12 @@ for (const btn of document.querySelectorAll(".stats-tab")) {
     renderChart();
   });
 }
+
+document.getElementById("btn-chart-toggle").addEventListener("click", (e) => {
+  chartType = chartType === "pie" ? "bar" : "pie";
+  e.currentTarget.textContent = chartType === "pie" ? "切换柱状图" : "切换饼图";
+  renderChart();
+});
 
 // ---- 窗口控制 ----
 // 标记 + 最小化交给后端一次做完，守护不会把主人主动最小化当成 Win+D 藏窗弹回来

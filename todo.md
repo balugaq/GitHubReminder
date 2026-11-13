@@ -201,7 +201,11 @@
   - 旧「每行事件类型」统计视图删掉，不保留。
   - 验收：`npm test` 全过、`node --check`、grep 静态核对；视觉待主人目视确认。
 
-- [ ] **T6 柱状图：点击切换，按项目划分通知数量**（依赖 T5）
+- [x] **T6 柱状图：点击切换，按项目划分通知数量**（完成 2026-11-13 @worktree/nov13）
+  - `index.html` 露出 `#btn-chart-toggle`；`main.js` 加 `chartType` 状态，`renderChart` 按类型分派 `renderPie` / `renderBar`，切换沿用当前时间窗口。
+  - `renderBar` 用 `CHART.barModel` 画 SVG：0 / 半 / 满三条网格线与刻度、每项目一根柱（沿用项目色）、柱顶数量、旋转 -35° 的短标签；最多 12 根，超出时标题标注；hover 只提亮柱子并复用同一个 `Share / Total` 文本框（不位移，避免破坏基线对齐）。
+  - `chart.js` 的 `barModel` 补 1 个截断单测；`styles.css` 加切换按钮与柱状图样式。
+  - 验收：`node --check`、`npm test` 36/36、grep 确认落地、`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告（本项未改 Rust）。**柱状图视觉待主人目视确认**。
   - 统计页加「饼图 / 柱状图」切换按钮，柱状图沿用同一份窗口数据与项目色。
   - 验收：`npm test` 全过、grep 确认落地；视觉待主人目视确认。
 
