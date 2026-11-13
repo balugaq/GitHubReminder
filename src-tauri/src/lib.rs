@@ -1066,13 +1066,6 @@ fn set_pin(
     }
 }
 
-#[tauri::command]
-fn get_stats(
-    state: tauri::State<Arc<AppState>>,
-) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
-    state.config.lock().unwrap().stats.clone()
-}
-
 // ---- 项目外观 / bot 关键词 / 统计窗口 -------------------------------------
 // 已知项目 = 监听过的仓库 + 现有通知 + 统计流水；缺样式的在读取时补齐并落盘，
 // 保证饼图颜色和设置页列表永远对得上。
@@ -1353,7 +1346,6 @@ pub fn run() {
             set_status_batch,
             delete_event,
             set_pin,
-            get_stats,
             get_stats_ranges,
             format_selected_notices,
             get_project_styles,

@@ -510,29 +510,80 @@ button { font-family: inherit; }
 .ctx-item.danger { color: #ff9b9b; }
 .ctx-sep { height: 1px; margin: 3px 4px; background: rgba(255, 255, 255, 0.15); }
 
-/* ---- 统计视图 ---- */
-#view-stats { align-items: stretch; gap: 10px; }
+/* ---- 统计视图：bstats 风格深色卡片 + 项目占比饼图 ---- */
+#view-stats { align-items: stretch; gap: 9px; }
+.stats-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .stats-title { font-size: 13px; font-weight: 700; opacity: 0.85; }
-#stats-list {
+#btn-stats-back { padding: 5px 12px; font-size: 12px; }
+#stats-tabs { display: flex; gap: 5px; flex-shrink: 0; }
+.stats-tab {
   flex: 1;
-  overflow-y: auto;
+  padding: 5px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.stats-tab:hover { background: rgba(255, 255, 255, 0.16); }
+.stats-tab.active {
+  background: rgba(74, 144, 217, 0.78);
+  border-color: rgba(120, 185, 255, 0.9);
+  font-weight: 700;
+}
+#chart-card {
+  position: relative;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  min-height: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: #1c1e26;
 }
-.stats-row {
+.chart-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.22);
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
 }
-.stats-key { font-size: 12.5px; font-weight: 700; }
-.stats-detail { font-size: 11.5px; opacity: 0.8; text-align: right; }
-#btn-stats-back { align-self: center; padding: 7px 18px; font-size: 13px; }
+#chart-body { flex: 1; min-height: 0; }
+.chart-svg { width: 100%; height: 100%; display: block; }
+.chart-leader { fill: none; stroke: rgba(255, 255, 255, 0.42); stroke-width: 1; }
+.chart-label {
+  fill: rgba(255, 255, 255, 0.88);
+  font-size: 9px;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.pie-slice {
+  transform-box: view-box;
+  transform-origin: 260px 160px;
+  transition: transform 0.18s ease, filter 0.18s ease;
+  stroke: #1c1e26;
+  stroke-width: 1.4;
+  cursor: pointer;
+}
+.pie-slice.hovered { filter: brightness(1.12); }
+.chart-tip {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(10, 12, 18, 0.94);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: pre-line;
+  pointer-events: none;
+}
+.chart-tip.hidden { display: none; }
+#chart-empty { text-align: center; padding: 12px 0; }
 
 .event-repo { font-size: 11px; opacity: 0.75; }
 .event-title {
@@ -602,22 +653,18 @@ button { font-family: inherit; }
 
 /* ---- 滚动条：跟随用户自定义的 ARGB 背景色，完全替换系统默认风格 ----
    滑块用 --frame-color 实色 + 白色描边（半透明彩色底上才勾得出轮廓），
-   轨道压暗、去掉上下箭头与角落方块；#stats-list 原先漏了，会冒系统粗条，
-   这里三个滚动容器一次统一覆盖。 */
+   轨道压暗、去掉上下箭头与角落方块；两个滚动容器一次统一覆盖。 */
 #content::-webkit-scrollbar,
-#event-feed::-webkit-scrollbar,
-#stats-list::-webkit-scrollbar { width: 6px; height: 6px; }
+#event-feed::-webkit-scrollbar { width: 6px; height: 6px; }
 
 #content::-webkit-scrollbar-track,
-#event-feed::-webkit-scrollbar-track,
-#stats-list::-webkit-scrollbar-track {
+#event-feed::-webkit-scrollbar-track {
   background: var(--scroll-track);
   border-radius: 3px;
 }
 
 #content::-webkit-scrollbar-thumb,
-#event-feed::-webkit-scrollbar-thumb,
-#stats-list::-webkit-scrollbar-thumb {
+#event-feed::-webkit-scrollbar-thumb {
   background: var(--scroll-thumb);
   border: 1px solid var(--scroll-thumb-edge);
   border-radius: 3px;
@@ -626,19 +673,16 @@ button { font-family: inherit; }
 }
 
 #content::-webkit-scrollbar-thumb:hover,
-#event-feed::-webkit-scrollbar-thumb:hover,
-#stats-list::-webkit-scrollbar-thumb:hover {
+#event-feed::-webkit-scrollbar-thumb:hover {
   background: var(--scroll-thumb-hover);
   border-color: var(--scroll-thumb-edge-hover);
 }
 
 #content::-webkit-scrollbar-button,
-#event-feed::-webkit-scrollbar-button,
-#stats-list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+#event-feed::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 
 #content::-webkit-scrollbar-corner,
-#event-feed::-webkit-scrollbar-corner,
-#stats-list::-webkit-scrollbar-corner { background: transparent; }
+#event-feed::-webkit-scrollbar-corner { background: transparent; }
 
 /* ---- 板视图：GitHub Projects 风格横向分列 ----
    列宽固定不收缩，窗口小时靠 #board-wrap 的横向滚动条向右滑，溢出是预期行为。 */

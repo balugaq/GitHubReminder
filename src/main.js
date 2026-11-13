@@ -771,41 +771,116 @@ async function addEvents() {
   await refreshEvents();
 }
 
-// ---- 统计视图 ----
-function renderStats(stats) {
-  const list = document.getElementById("stats-list");
-  list.innerHTML = "";
-  const entries = Object.entries(stats);
-  if (entries.length === 0) {
-    list.innerHTML = '<p class="hint">还没有统计数据</p>';
-    return;
+// ---- 统计视图：今日 / 本周 / 本月 / 历史，按项目占比 ----
+const CHART = window.GhrChart;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const RANGE_LABEL = {
+  today: "今日通知",
+  week: "本周通知",
+  month: "本月通知",
+  history: "历史通知",
+};
+const CHART_W = 520;
+const CHART_H = 320;
+const CHART_CX = 260;
+const CHART_CY = 160;
+const CHART_R = 100;
+let statsRanges = null;
+let projectStyles = {};
+let activeRange = "today";
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+function hideChartTip() {
+  document.getElementById("chart-tip").classList.add("hidden");
+}
+
+// hover 时沿半径外移 + 略微放大，右下角文本框给出项目 / 占比 / 总数
+function showChartTip(slice, path, total) {
+  path.classList.add("hovered");
+  const dx = (Math.cos(slice.angle) * 8).toFixed(2);
+  const dy = (Math.sin(slice.angle) * 8).toFixed(2);
+  path.style.transform = `translate(${dx}px, ${dy}px) scale(1.045)`;
+  const tip = document.getElementById("chart-tip");
+  tip.textContent = `${slice.repo}\nShare: ${(slice.share * 100).toFixed(2)}%\nTotal: ${total}`;
+  tip.classList.remove("hidden");
+}
+
+function renderPie(slices, total) {
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${CHART_W} ${CHART_H}`,
+    class: "chart-svg",
+  });
+  for (const item of CHART.leaderLayout(
+    slices, CHART_CX, CHART_CY, CHART_R, CHART_W, CHART_H
+  )) {
+    svg.appendChild(svgEl("path", { d: item.line, class: "chart-leader" }));
+    const label = svgEl("text", {
+      x: item.endX,
+      y: item.labelY,
+      "text-anchor": item.anchor,
+      class: "chart-label",
+    });
+    label.textContent = `${item.slice.name}: ${(item.slice.share * 100).toFixed(2)}%`;
+    svg.appendChild(label);
   }
-  // 仓库维度在前，单条维度在后
-  entries.sort(([a], [b]) => (a.includes("#") ? 1 : 0) - (b.includes("#") ? 1 : 0));
-  for (const [key, kinds] of entries) {
-    const row = document.createElement("div");
-    row.className = "stats-row";
-    const name = document.createElement("span");
-    name.className = "stats-key";
-    name.textContent = key;
-    const detail = document.createElement("span");
-    detail.className = "stats-detail";
-    detail.textContent = Object.entries(kinds)
-      .map(([kind, count]) => `${KIND_LABEL[kind] || kind} ×${count}`)
-      .join(" · ");
-    row.appendChild(name);
-    row.appendChild(detail);
-    list.appendChild(row);
+  for (const slice of slices) {
+    const path = svgEl("path", {
+      d: CHART.slicePath(slice, CHART_CX, CHART_CY, CHART_R),
+      fill: slice.color,
+      class: "pie-slice",
+    });
+    path.addEventListener("mouseenter", () => showChartTip(slice, path, total));
+    path.addEventListener("mouseleave", () => {
+      path.classList.remove("hovered");
+      path.style.transform = "";
+      hideChartTip();
+    });
+    svg.appendChild(path);
   }
+  document.getElementById("chart-body").appendChild(svg);
+}
+
+function renderChart() {
+  const counts = (statsRanges && statsRanges[activeRange]) || {};
+  const { total, slices } = CHART.summarize(counts, projectStyles);
+  document.getElementById("chart-title").textContent =
+    `${RANGE_LABEL[activeRange]} · 共 ${total} 条`;
+  const body = document.getElementById("chart-body");
+  body.innerHTML = "";
+  hideChartTip();
+  document.getElementById("chart-empty").classList.toggle("hidden", total > 0);
+  if (total > 0) renderPie(slices, total);
 }
 
 async function openStats() {
   showView("view-stats");
   try {
-    renderStats(await invoke("get_stats"));
+    [statsRanges, projectStyles] = await Promise.all([
+      invoke("get_stats_ranges"),
+      invoke("get_project_styles"),
+    ]);
   } catch (err) {
     console.warn("读取统计失败:", err);
+    statsRanges = { today: {}, week: {}, month: {}, history: {} };
+    projectStyles = {};
   }
+  renderChart();
+}
+
+// 顶层绑定：统计页不是启动瞬间的输入，但和搜索/批量一样避开 init 的 await
+for (const btn of document.querySelectorAll(".stats-tab")) {
+  btn.addEventListener("click", () => {
+    activeRange = btn.dataset.range || "today";
+    for (const b of document.querySelectorAll(".stats-tab")) {
+      b.classList.toggle("active", b === btn);
+    }
+    renderChart();
+  });
 }
 
 // ---- 窗口控制 ----

@@ -220,9 +220,6 @@ pub struct Config {
     // status / pinned 由前端经对应命令置位。旧版 events 字段不兼容，serde 忽略即丢弃（不迁移）。
     #[serde(default)]
     pub entities: Vec<Entity>,
-    // 旧统计（repo -> kind -> 次数）：不再写入，保留字段只为兼容旧存档读取
-    #[serde(default)]
-    pub stats: BTreeMap<String, BTreeMap<String, u64>>,
     // bot 关键词（contains 匹配 issue/pr 发起者），命中项统一下沉到项目通知末尾
     #[serde(default = "default_bot_keywords")]
     pub bot_keywords: Vec<String>,
@@ -258,7 +255,6 @@ impl Default for Config {
             cursor_state: HashMap::new(),
             cursor_closed: HashMap::new(),
             entities: Vec::new(),
-            stats: BTreeMap::new(),
             bot_keywords: default_bot_keywords(),
             project_styles: BTreeMap::new(),
             stat_events: Vec::new(),

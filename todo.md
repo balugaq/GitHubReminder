@@ -190,7 +190,12 @@
   - 验收：`npm test` 全过、grep 确认分支；复制结果待主人实测。
 
 ### P2
-- [ ] **T5 统计改版：今日/本周/本月/历史 4 个 bstats 风格饼图**（依赖 T1）
+- [x] **T5 统计改版：今日/本周/本月/历史 4 个 bstats 风格饼图**（完成 2026-11-13 @worktree/nov13）
+  - `index.html` 统计页换成 4 个 tab + `#chart-card` 深色卡片 + SVG 容器 + tooltip + 空态，引入 `chart.js`；旧 `#stats-list` / `renderStats` / `get_stats` 全部删掉。
+  - 新增 `src/chart.js` 纯逻辑：`summarize`（总数/占比/项目色/按条数降序）、`slicePath`（12 点方向起顺时针，整圆拆两段弧）、`polar`、`leaderLayout`（引出线折线 + 同侧标签最小间距推挤防叠字）、`barModel`（T6 用）；配 `tests/chart.test.mjs` 6 个单测。
+  - `main.js` 用 `get_stats_ranges` + `get_project_styles` 拉数据，按 `activeRange` 渲染 SVG 饼图；扇形填固定项目色，标签 `项目名: xx.xx%` 带引出线；hover 沿半径外移 + `scale(1.045)` 动画凸显，右下角文本框显示 `repo / Share: xx.xx% / Total: N`（Total = 该窗口总通知数）。
+  - 后端清理：删掉 `Config.stats` 字段与 `get_stats` 命令（旧存档的旧统计键由 serde 忽略，等同丢弃旧数据）。
+  - 验收：`node --check`、`npm test` 35/35、`cargo check`、`cargo clippy --all-targets -- -D warnings` 零代码警告、`cargo test --lib` 49/49、grep 确认旧统计 0 处残留。**饼图视觉与 hover 动画待主人目视确认**。
   - `index.html` 统计视图改成 4 个 tab + SVG 饼图容器 + tooltip 文本框；抽 `src/chart.js` 纯逻辑（分窗口聚合、占比、扇形 path、引出线标签布局、柱状图数据）配 `tests/chart.test.mjs`。
   - 深色卡片 + 固定鲜艳项目色 + `名称: xx.xx%` 引出线标签；hover 扇形沿半径外移并放大，tooltip 显示项目名 / `Share: xx.xx%` / `Total: N`。
   - 旧「每行事件类型」统计视图删掉，不保留。

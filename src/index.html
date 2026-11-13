@@ -71,9 +71,26 @@
         </section>
 
         <section id="view-stats" class="view hidden">
-          <p class="stats-title">通知统计（跨重启累计）</p>
-          <div id="stats-list"></div>
-          <button id="btn-stats-back" class="btn-primary">← 返回</button>
+          <div class="stats-head">
+            <p class="stats-title">通知统计 · 按项目</p>
+            <button id="btn-stats-back" class="btn-primary">← 返回</button>
+          </div>
+          <nav id="stats-tabs">
+            <button class="stats-tab active" data-range="today">今日</button>
+            <button class="stats-tab" data-range="week">本周</button>
+            <button class="stats-tab" data-range="month">本月</button>
+            <button class="stats-tab" data-range="history">历史</button>
+          </nav>
+          <div id="chart-card">
+            <div class="chart-head">
+              <span id="chart-title">今日通知</span>
+              <!-- 柱状图切换由 T6 接上，这里先不露出半成品按钮 -->
+              <button id="btn-chart-toggle" class="chart-toggle hidden" type="button">切换柱状图</button>
+            </div>
+            <div id="chart-body"></div>
+            <div id="chart-tip" class="chart-tip hidden"></div>
+          </div>
+          <p id="chart-empty" class="hint hidden">该时间范围还没有通知</p>
         </section>
       </main>
 
@@ -90,6 +107,7 @@
     <script src="search.js"></script>
     <script src="batch.js"></script>
     <script src="board.js"></script>
+    <script src="chart.js"></script>
     <script src="main.js"></script>
   </body>
 </html>
