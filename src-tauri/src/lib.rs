@@ -1,4 +1,5 @@
 mod github;
+mod notice;
 mod qqrelay;
 mod stats;
 mod store;
@@ -333,88 +334,32 @@ fn restart_relay(state: &AppState) {
     *state.relay.lock().unwrap() = Some(handle);
 }
 
-// QQ 推送正文：每条事件一块三行卡片；全部发出不折叠，
-// 超长交给 qqrelay::split_text 按行分段（1900 字上限，链接不会被截断）
-// 格式（头部一行由 spawn_qq_push 拼上）：
-//   [GitHubReminder] 通知 · GitHub 动态
-//   新 PR #459 · owner/repo
-//   [@me] [author] · 标题（评论统一显示「有新消息」）
-//   https://github.com/owner/repo/pull/459
-//
-// [@me] 仅当该事件的 assignee 列表里有本人（设置里填的 GitHub 用户名）时出现；
-// [author] 是提 issue / pr 的人。两者都没有时标题行保持纯标题。
-// 头一行带动作（新/已关闭/状态变更/新评论），主人 2026-11-07 要求补事件标注。
-fn event_kind_label(ev: &github::Event) -> &'static str {
-    match ev.kind.as_str() {
-        "release" => "新 Release",
-        "pr" => "新 PR",
-        "closed_pr" => "已关闭 PR",
-        "issue" => "新 Issue",
-        "closed_issue" => "已关闭 Issue",
-        // state/comment 按 URL 区分挂在 Issue 还是 PR 上
-        "state" if ev.url.contains("/pull/") => "PR 状态变更",
-        "state" => "Issue 状态变更",
-        _ if ev.url.contains("/pull/") => "PR 新评论",
-        _ => "Issue 新评论",
-    }
-}
-
-fn qq_summary(events: &[github::Event], my_username: Option<&str>) -> String {
-    let me = my_username
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty());
-    let mut lines: Vec<String> = Vec::new();
-    for ev in events {
-        let head = match ev.number {
-            Some(n) => format!("{} #{n} · {}", event_kind_label(ev), ev.repo),
-            None => format!("{} · {}", event_kind_label(ev), ev.repo),
-        };
-        let title = if ev.kind == "comment" {
-            "有新消息".to_string()
-        } else {
-            ev.title.clone()
-        };
-        let at_me = me.as_ref().is_some_and(|m| {
-            ev.assignees.iter().any(|a| a.trim().to_lowercase() == *m)
-        });
-        let mut marks = String::new();
-        if at_me {
-            marks.push_str("[@me] ");
-        }
-        if !ev.author.is_empty() {
-            marks.push_str(&format!("[{}] ", ev.author));
-        }
-        let title_line = if marks.is_empty() {
-            title
-        } else {
-            format!("{marks}· {title}")
-        };
-        lines.push(head);
-        lines.push(title_line);
-        lines.push(ev.url.clone());
-    }
-    lines.join("\n")
-}
-
-// 有新事件时推送：自动配置开 = 直调内置中转（需端口+凭证齐全）；
-// 自动配置关 = POST 到外部已有中转服务（只需端口，凭证由外部服务持有）
+// QQ 文案与分组统一放在 notice.rs（推送与多选复制共用一套格式）。
+// 每个项目单独一条消息；同一批里串行发送，避免并发撞 QQ 机器人的频率限制。
+// 自动配置开 = 直调内置中转（需端口+凭证齐全）；关 = POST 到外部已有中转服务。
 fn spawn_qq_push(cfg: &Config, events: &[github::Event]) {
     if !cfg.qq_notify || events.is_empty() {
         return;
     }
-    let text = format!(
-        "[GitHubReminder] 通知 · GitHub 动态\n{}",
-        qq_summary(events, cfg.github_username.as_deref())
+    let messages = notice::build_messages(
+        events,
+        cfg.github_username.as_deref(),
+        &cfg.bot_keywords,
     );
+    if messages.is_empty() {
+        return;
+    }
     if cfg.qq_autoconfig {
         let Some(rc) = relay_cfg_of(cfg) else {
             println!("[qq] 自动配置开但端口/凭证未配全，跳过 QQ 推送");
             return;
         };
         tauri::async_runtime::spawn(async move {
-            match qqrelay::send_to_qq(&rc, &text).await {
-                Ok(n) => println!("[qq] 已推送 {n} 段"),
-                Err(e) => println!("[qq] 推送失败（静默）: {e}"),
+            for text in messages {
+                match qqrelay::send_to_qq(&rc, &text).await {
+                    Ok(n) => println!("[qq] 已推送 {n} 段"),
+                    Err(e) => println!("[qq] 推送失败（静默）: {e}"),
+                }
             }
         });
     } else {
@@ -423,9 +368,11 @@ fn spawn_qq_push(cfg: &Config, events: &[github::Event]) {
             return;
         };
         tauri::async_runtime::spawn(async move {
-            match qqrelay::post_to_relay(port, &text).await {
-                Ok(n) => println!("[qq] 经外部中转已推送 {n} 段"),
-                Err(e) => println!("[qq] 推送失败（静默）: {e}"),
+            for text in messages {
+                match qqrelay::post_to_relay(port, &text).await {
+                    Ok(n) => println!("[qq] 经外部中转已推送 {n} 段"),
+                    Err(e) => println!("[qq] 推送失败（静默）: {e}"),
+                }
             }
         });
     }
@@ -666,9 +613,19 @@ fn auto_done_on_close(ev: &github::Event, state: &str) -> bool {
         && is_dependabot_author(&ev.author)
 }
 
+fn assignee_is_me(assignees: &[String], me: Option<&str>) -> bool {
+    me.is_some_and(|m| assignees.iter().any(|a| a.trim().to_lowercase() == m))
+}
+
 // 把变化事件 upsert 进实体表：同一 repo+number 聚合为一卡，updated_at 取最新；
-// 有新动态（时间更新或状态/类型变化）则 status 重置为未读。同时累计 stats。
+// 有新动态（时间更新或状态/类型变化）则 status 重置为未读。同时记统计流水。
 fn record_entities(cfg: &mut Config, events: &[github::Event]) {
+    // 本人用户名只算一次，写进实体供 QQ 文案与多选复制共用
+    let me = cfg
+        .github_username
+        .as_deref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty());
     // 本批次触发自动规则的实体；循环结束后统一应用，避免同批次后续事件把 done 冲掉
     let mut auto_done: Vec<(String, Option<u64>)> = Vec::new();
     for ev in events {
@@ -685,6 +642,10 @@ fn record_entities(cfg: &mut Config, events: &[github::Event]) {
                 e.author = ev.author.clone();
             }
             merge_people(&mut e.people, ev);
+            // 不带 assignee 的事件不冲掉已有判定（后续事件常常只带作者）
+            if !ev.assignees.is_empty() {
+                e.at_me = assignee_is_me(&ev.assignees, me.as_deref());
+            }
             // 评论不改 state，不视为变化；其余按时间/状态/类型判断
             let changed = ev.created_at > e.updated_at
                 || e.last_event_kind != last_kind
@@ -717,6 +678,7 @@ fn record_entities(cfg: &mut Config, events: &[github::Event]) {
                 pinned: false,
                 author: ev.author.clone(),
                 people,
+                at_me: assignee_is_me(&ev.assignees, me.as_deref()),
             });
         }
         // 统计流水只记「哪个项目在什么时候来了一条通知」，占比由 stats::snapshot 现算
@@ -1181,6 +1143,16 @@ fn get_stats_ranges(state: tauri::State<Arc<AppState>>) -> stats::RangeCount {
     stats::snapshot(&cfg.stat_events, &cfg.entities, chrono::Utc::now().timestamp())
 }
 
+// 多选「复制」：按前端传入的选择顺序拼小通知块，格式与 QQ 推送同源
+#[tauri::command]
+fn format_selected_notices(
+    state: tauri::State<Arc<AppState>>,
+    keys: Vec<notice::NoticeKey>,
+) -> String {
+    let cfg = state.config.lock().unwrap();
+    notice::format_selected(&cfg.entities, &keys)
+}
+
 // 添加监听时的浏览弹窗：列出仓库下的 Issue/PR 供勾选（单条监听默认开评论+状态变更）
 #[tauri::command]
 async fn list_repo_items(
@@ -1383,6 +1355,7 @@ pub fn run() {
             set_pin,
             get_stats,
             get_stats_ranges,
+            format_selected_notices,
             get_project_styles,
             set_project_style,
             get_bot_keywords,
@@ -1442,107 +1415,66 @@ mod window_tests {
     }
 }
 
+// 旧 qq_summary 的逐行断言已全部迁到 notice.rs 的 7 个单测；
+// 这里只保留 lib 侧的接线检查：本人判定、默认 bot 关键词、按项目拆消息。
 #[cfg(test)]
-mod qq_tests {
+mod notice_tests {
     use super::*;
 
-    fn ev(kind: &str, num: Option<u64>, path: &str) -> github::Event {
+    fn ev(repo: &str, kind: &str, num: u64, at: &str, author: &str) -> github::Event {
         github::Event {
             kind: kind.into(),
-            repo: "octocat/hello-world".into(),
-            number: num,
-            title: "fix: 示例提交标题".into(),
-            url: format!("https://github.com/octocat/hello-world/{path}"),
-            created_at: "2026-11-01T00:00:00+08:00".into(),
-            author: "octocat".into(),
+            repo: repo.into(),
+            number: Some(num),
+            title: "示例标题".into(),
+            url: format!("https://github.com/{repo}/issues/{num}"),
+            created_at: at.into(),
+            author: author.into(),
             assignees: vec!["octocat".into()],
         }
     }
 
     #[test]
-    fn qq_summary_uses_card_style_four_line_block() {
-        let events = vec![ev("pr", Some(459), "pull/459")];
-        let text = format!(
-            "[GitHubReminder] 通知 · GitHub 动态\n{}",
-            qq_summary(&events, Some("octocat"))
-        );
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "[GitHubReminder] 通知 · GitHub 动态");
-        assert_eq!(lines[1], "新 PR #459 · octocat/hello-world");
-        assert_eq!(lines[2], "[@me] [octocat] · fix: 示例提交标题");
-        assert_eq!(lines[3], "https://github.com/octocat/hello-world/pull/459");
+    fn assignee_match_is_case_insensitive_and_needs_username() {
+        let a = vec!["OcToCaT".into()];
+        assert!(assignee_is_me(&a, Some("octocat")));
+        assert!(!assignee_is_me(&a, None));
+        assert!(!assignee_is_me(&a, Some("bob")));
     }
 
     #[test]
-    fn qq_summary_hides_at_me_when_not_assignee() {
-        let mut e = ev("issue", Some(461), "issues/461");
-        e.assignees = vec!["other".into()];
-        let text = qq_summary(&[e], Some("octocat"));
-        assert!(!text.contains("[@me]"), "不在 assignee 列表里就不该出现 @me：{text}");
-        assert!(text.contains("[octocat] · "), "提 issue 的人仍在：{text}");
-    }
-
-    #[test]
-    fn qq_summary_no_at_me_when_username_not_configured() {
-        let events = vec![ev("issue", Some(461), "issues/461")];
-        let text = qq_summary(&events, None);
-        assert!(!text.contains("[@me]"), "未填用户名时不应判断：{text}");
-        assert!(text.contains("[octocat] · "), "但用户名标记仍应显示：{text}");
-    }
-
-    #[test]
-    fn qq_summary_comment_shows_generic_message() {
-        let events = vec![ev("comment", Some(461), "issues/461")];
-        let text = qq_summary(&events, None);
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "Issue 新评论 #461 · octocat/hello-world");
-        assert!(lines[1].ends_with("· 有新消息"), "评论标题统一「有新消息」：{}", lines[1]);
-    }
-
-    #[test]
-    fn qq_summary_release_has_no_number() {
-        let mut rel = ev("release", None, "releases/tag/v1");
-        rel.title = "v1.0".into();
-        let text = qq_summary(&[rel], None);
-        assert!(text.starts_with("新 Release · octocat/hello-world\n"));
-        assert!(text.contains("[octocat] · v1.0"), "发布者应显示在标题行：{text}");
-    }
-
-    #[test]
-    fn qq_summary_emits_all_events_without_folding() {
-        let events: Vec<github::Event> = (1..=12)
-            .map(|n| ev("issue", Some(n), &format!("issues/{n}")))
-            .collect();
-        let text = qq_summary(&events, None);
-        for n in 1..=12 {
-            assert!(
-                text.contains(&format!("新 Issue #{n} · ")),
-                "第 {n} 条不应被折叠掉"
-            );
-        }
-        assert!(
-            !text.contains("以及另外"),
-            "不应再有折叠提示：{text}"
-        );
-    }
-
-    #[test]
-    fn qq_summary_head_line_marks_event_action() {
-        // 主人 2026-11-07 要求：头一行除类型外还要标事件动作
-        let cases: Vec<(&str, &str, &str)> = vec![
-            ("closed_pr", "pull/9", "已关闭 PR #9 · octocat/hello-world"),
-            ("closed_issue", "issues/9", "已关闭 Issue #9 · octocat/hello-world"),
-            ("state", "pull/9", "PR 状态变更 #9 · octocat/hello-world"),
-            ("state", "issues/9", "Issue 状态变更 #9 · octocat/hello-world"),
-            ("comment", "pull/9", "PR 新评论 #9 · octocat/hello-world"),
+    fn default_bot_keyword_sinks_dependabot_to_the_last_block() {
+        let cfg = Config::default();
+        let events = vec![
+            ev("o/alpha", "pr", 1, "2026-11-01T01:00:00Z", "dependabot[bot]"),
+            ev("o/alpha", "issue", 2, "2026-11-01T02:00:00Z", "octocat"),
         ];
-        for (kind, path, expected) in cases {
-            let text = qq_summary(&[ev(kind, Some(9), path)], None);
-            assert!(
-                text.lines().next() == Some(expected),
-                "kind={kind} 头一行应为「{expected}」：{text}"
-            );
-        }
+        let msg = notice::build_messages(
+            &events,
+            cfg.github_username.as_deref(),
+            &cfg.bot_keywords,
+        )
+        .remove(0);
+        assert!(
+            msg.find("#2").unwrap() < msg.find("#1").unwrap(),
+            "默认关键词应把 bot 排到最后: {msg}"
+        );
+    }
+
+    #[test]
+    fn each_repo_gets_its_own_message() {
+        let cfg = Config::default();
+        let events = vec![
+            ev("o/alpha", "issue", 1, "2026-11-01T01:00:00Z", "octocat"),
+            ev("o/beta", "issue", 2, "2026-11-01T02:00:00Z", "octocat"),
+        ];
+        let msgs = notice::build_messages(
+            &events,
+            cfg.github_username.as_deref(),
+            &cfg.bot_keywords,
+        );
+        assert_eq!(msgs.len(), 2);
+        assert!(msgs.iter().all(|m| m.starts_with(notice::GR_TITLE)));
     }
 }
 

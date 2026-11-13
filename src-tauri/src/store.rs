@@ -73,6 +73,10 @@ pub struct Entity {
     // 供搜索语法 @用户名 判定「与谁有关」，比 author 更宽（含指派人）。
     // 评论事件的 author 仍是 issue/pr 发起者（见 github.rs::poll_item），故不含评论者。
     pub people: Vec<String>,
+    // 最近一次事件的 assignee 里是否有本人（设置里的 GitHub 用户名）；QQ 文案 [@me] 与
+    // 多选复制共用这一份判定，避免前端拿 people（含作者）误判。旧存档默认 false。
+    #[serde(default)]
+    pub at_me: bool,
 }
 
 // 主窗口位置与尺寸（物理像素），移动/拉伸时记录，下次启动恢复

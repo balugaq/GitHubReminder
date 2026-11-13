@@ -138,9 +138,9 @@
 优先级：**P0** T1（地基）→ **P1** T2/T3/T4（QQ 通知 + 板视图多选，本轮主线）→ **P2** T5/T6/T7（统计改版 + 项目外观）→ **P3** T8（独立、改动小，收尾做）。
 
 ### 实现假设（拿不准的先按此落地，交付时单列待主人确认）
-- `[@//me/]` 判定沿用现有口径：assignee 含设置里的 GitHub 用户名才显示；字面标记按主人给的 `[@//me/]`。
+- 字面标记是 `[@me]`（主人 2026-11-13 澄清：原需求文本里的 `@//me/`、`\me\` 都是在特定输入框输入 `@me` 时被自动格式化出来的，**不是本意**；旧版 `qq_summary` 本来就用 `[@me]`）。判定口径沿用现有逻辑：assignee 含设置里的 GitHub 用户名才显示，没有就不显示。
 - 非 release 小通知**不带时间前缀**（严格照抄主人给的 issue 模板），release 带 `[YY-MM HH:mm:ss]`；排序一律按 `created_at` 升序（最旧先发）。
-- 动作词：issue/pr 新建「开启了」、关闭「关闭了」、状态「更新了状态」、评论「有新消息」；release 用「发布了 <版本> 版本」。
+- 动作词：issue/pr 新建「开启了」、关闭「关闭了」、状态/评论统一「更新了」（评论事件的 author 是 issue 发起者，写「评论了」会张冠李戴）；release 用「发布了 <版本> 版本」。
 - 「折叠 bot」= 把命中关键词的通知统一挪到该项目列表末尾，格式不变，不额外加标题。
 - 「通知数量」口径 = 每次轮询产生的一条 github::Event；旧 `stats`（repo→kind 计数）不再读取、不再写入，旧存档字段由 serde 忽略。历史视图在流水为空时用现有 entities 按 repo 兜底一次，避免空图。
 - 统计时间窗口按本机自然日 / 自然周（周一起）/ 自然月（1 日起）/ 全部。
@@ -158,11 +158,17 @@
   - 验收：cargo check + clippy -D warnings 零警告，新增 Rust 单测（默认色稳定、bot contains 匹配、时间窗口边界、流水裁剪）。
 
 ### P1
-- [ ] **T2 QQ 通知改版：按项目分组 + bot 折叠 + 新文案**（依赖 T1）
+- [x] **T2 QQ 通知改版：按项目分组 + bot 折叠 + 新文案**（完成 2026-11-13 @worktree/nov13）
+  - 新增 `src-tauri/src/notice.rs`：固定标题 `[GitHubReminder] 通知 · GitHub 动态` + 项目标题 `<repo> · <N> 个通知` + 小通知块（issue/pr：`[@me] author 开启了 #n : 标题` / `点击跳转：url`；release：`[YY-MM HH:mm:ss] author 发布了 <版本> 版本` / `点击跳转：url`），块间空行；组内按 `created_at` 升序（最旧先发）。
+  - bot 关键词 contains 匹配 issue/pr 发起者，命中项整组下沉到该项目末尾（release 不参与）；默认 `dependabot[bot]` 由 T1 的配置提供。
+  - `spawn_qq_push` 改为**每个项目一条消息**、同批串行发送（避免并发撞 QQ 频率限制），内置中转与外部中转两条路径都改；`lib.rs` 删掉旧 `qq_summary` / `event_kind_label`。
+  - `format_selected_notices` 命令复用同一格式化，供 T4 多选复制；`Entity` 新增 `at_me`（`record_entities` 按 assignee + 设置用户名判定），让复制与推送口径一致。
+  - **主人 2026-11-13 澄清**：字面标记是 `[@me]`，需求文本里的 `@//me/`、`\me\` 是输入框自动格式化产物，**不是本意**（旧 `qq_summary` 本来就用 `[@me]`）；已把本轮写错的地方全部改回，代码里 0 处残留。
+  - 验收：cargo check、`cargo clippy --all-targets -- -D warnings` 零代码警告、`cargo test --lib` 49/49（旧 `qq_tests` 的 7 个断言迁到 notice.rs 的 7 个新单测，lib 侧留 3 个接线测试）、`npm test` 26/26。
   - 抽 `src-tauri/src/notice.rs`：固定标题 `[GitHubReminder] 通知 · GitHub 动态`、项目标题 `<repo> · <N> 个通知`、小通知按时间升序、块间空行、bot 命中关键词（contains author）统一排到该项目末尾。
   - `spawn_qq_push` 改为**每个项目单独发一条消息**（分多次推送），不再合成一条大文本。
   - `format_selected_notices` 命令复用同一格式化逻辑，供 T4 复制选中项用（不含大标题/项目标题，只留块间空行）。
-  - 验收：Rust 单测覆盖分组/升序/`[@//me/]` 条件/release 格式/bot 排末尾/空行；旧 `qq_tests` 按新格式重写；cargo test --lib 全过。
+  - 验收：Rust 单测覆盖分组/升序/`[@me]` 条件/release 格式/bot 排末尾/空行；旧 `qq_tests` 按新格式重写；cargo test --lib 全过。
 
 - [ ] **T3 板视图多选入口：右键「多选」+ 四列列头「多选」按钮**（依赖 T2 的格式化命令）
   - `main.js` 新增全局 `multiSelect` 状态；`buildBoardCard` 加勾选框，跨列可选（不限制分类）；`selectedKeys` 的 Set 插入顺序即「选择顺序」。
