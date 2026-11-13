@@ -683,6 +683,25 @@ button { font-family: inherit; }
   white-space: nowrap;
 }
 .board-col-count { font-size: 11px; font-weight: 400; opacity: 0.65; }
+/* 列头数字右边的圆角多选按钮；四列共用一个全局开关 */
+.board-multi-btn {
+  margin-left: auto;
+  padding: 2px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.board-multi-btn:hover { background: rgba(255, 255, 255, 0.26); }
+.board-multi-btn.on {
+  background: rgba(74, 144, 217, 0.75);
+  border-color: rgba(120, 185, 255, 0.9);
+  font-weight: 700;
+}
 .board-col-body {
   flex: 1;
   min-height: 0;
@@ -712,6 +731,42 @@ button { font-family: inherit; }
 .board-card.status-read,
 .board-card.status-done { opacity: 0.5; }
 .board-card.status-in_progress { box-shadow: 0 0 0 1.5px rgba(255, 190, 80, 0.65) inset; }
+
+/* 板视图多选：勾选框只在多选状态出现，卡片让出左边距 */
+.board-card { position: relative; }
+.board-check { display: none; }
+body.multi-select .board-card { padding-left: 28px; cursor: pointer; }
+body.multi-select .board-card:active { cursor: pointer; }
+body.multi-select .board-check {
+  display: block;
+  position: absolute;
+  left: 8px;
+  top: 9px;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+.board-check:hover { border-color: rgba(255, 255, 255, 0.9); }
+.board-check.checked { background: #4a90d9; border-color: #4a90d9; }
+.board-check.checked::after {
+  content: "✓";
+  position: absolute;
+  left: 1px;
+  top: -3px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 14px;
+}
+.board-card.selected {
+  outline: 1.5px solid rgba(100, 175, 255, 0.9);
+  outline-offset: -1.5px;
+  background: rgba(74, 144, 217, 0.24);
+}
+.pinned-card.selected { outline: 1.5px solid rgba(100, 175, 255, 0.9); }
 .board-meta {
   font-size: 10.5px;
   color: rgba(255, 255, 255, 0.72);

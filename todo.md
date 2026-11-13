@@ -170,7 +170,12 @@
   - `format_selected_notices` 命令复用同一格式化逻辑，供 T4 复制选中项用（不含大标题/项目标题，只留块间空行）。
   - 验收：Rust 单测覆盖分组/升序/`[@me]` 条件/release 格式/bot 排末尾/空行；旧 `qq_tests` 按新格式重写；cargo test --lib 全过。
 
-- [ ] **T3 板视图多选入口：右键「多选」+ 四列列头「多选」按钮**（依赖 T2 的格式化命令）
+- [x] **T3 板视图多选入口：右键「多选」+ 四列列头「多选」按钮**（完成 2026-11-13 @worktree/nov13）
+  - `main.js` 新增全局 `multiSelect` + `setMultiSelect()`；`selectedKeys` 的 Set 插入顺序即选择顺序。`bindCard` 在多选状态下点整张卡 toggle 选中（不跳链接、不改已读），板卡同时关掉 `draggable` 避免抢手势；跨分类选择天然支持（key 里不带分类）。
+  - `buildBoardCard` 加 `.board-check` 勾选框 + selected 态；`paintSelection` / `clearSelection` 改为按 `[data-key]` 统一处理列表卡、板卡、置顶卡；`updateBatchBar` 同步四列按钮文案「多选 / 取消多选 (N)」，板视图多选时也露出批量条。
+  - 四列 `board-col-head` 计数右边加圆角「多选」按钮（四列共用一个全局开关，toggle 进/出）；右键菜单加「多选 / 退出多选」（列表视图没有列头，靠它退出）；Esc 也能退出；切视图自动退出。多选状态下右键菜单其余项（状态/置顶/删除/复制链接）不变。
+  - `styles.css` 加按钮、勾选框（仅多选状态显示）、选中态样式。
+  - 验收：`node --check`、`npm test` 26/26、grep 确认 15 处多选逻辑与 CSS 落地、`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告。**视觉与交互待主人目视确认**。
   - `main.js` 新增全局 `multiSelect` 状态；`buildBoardCard` 加勾选框，跨列可选（不限制分类）；`selectedKeys` 的 Set 插入顺序即「选择顺序」。
   - 右键菜单加「多选」项（开启并选中当前卡）；每列 `board-col-count` 右边加圆角矩形「多选 / 取消多选」按钮，toggle 全局状态并同步四个按钮文案与高亮。
   - 多选状态下右键菜单其余项（状态/置顶/删除）行为不变。

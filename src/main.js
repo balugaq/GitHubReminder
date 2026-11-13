@@ -121,6 +121,8 @@ let viewMode = "list"; // "list" | "board"，由管理窗口 emit 同步
 // ---- 批量选择 ----
 const BATCH = window.GhrBatch;
 const selectedKeys = new Set();
+// 板视图多选开关；Set 的插入顺序就是用户的选择顺序，复制时直接沿用
+let multiSelect = false;
 let undoState = null; // { snapshot, selection }：最近一次批量编辑的现场，供撤销
 let undoTimer = null;
 
@@ -132,6 +134,11 @@ function entityKey(ev) {
 function bindCard(card, ev) {
   card.addEventListener("click", (e) => {
     e.preventDefault();
+    // 多选状态下整张卡都是选中区，不跳链接也不改已读
+    if (multiSelect) {
+      toggleSelection(entityKey(ev));
+      return;
+    }
     // 未读点开即已读（同 GitHub 通知收件箱）；处理中/已完成不自动改
     if ((ev.status || "unread") === "unread") applyStatus(ev, "read");
     window.__TAURI__.opener.openUrl(ev.url);
@@ -326,12 +333,16 @@ function renderList() {
 // 白卡片是看板最标志性的层次；内容沿用列表卡片的字段，拖放只改状态
 function buildBoardCard(ev) {
   const card = document.createElement("a");
-  card.className = "board-card fade-up";
+  const key = entityKey(ev);
+  const checked = selectedKeys.has(key);
+  card.className = `board-card fade-up${checked ? " selected" : ""}`;
   if (ev.status) card.classList.add(`status-${ev.status}`);
   card.href = ev.url;
-  card.draggable = true;
-  card.dataset.key = entityKey(ev);
+  // 多选时禁用拖放，避免拖动与「点整张卡即选中」互相抢手势
+  card.draggable = !multiSelect;
+  card.dataset.key = key;
   card.innerHTML =
+    `<span class="board-check${checked ? " checked" : ""}" role="checkbox" aria-checked="${checked}" title="选择这张卡"></span>` +
     `<span class="board-meta"></span>` +
     `<span class="board-title"></span>` +
     `<span class="board-kind"></span>` +
@@ -347,6 +358,12 @@ function buildBoardCard(ev) {
     (ev.state ? ` · ${STATE_LABEL[ev.state] || ev.state}` : "");
   if (ev.author) card.title = `作者: ${ev.author}`;
   bindCard(card, ev);
+  card.querySelector(".board-check").addEventListener("click", (e) => {
+    // 勾选框不能触发 <a> 的打开链接，也不能冒泡到卡片再 toggle 一次
+    e.preventDefault();
+    e.stopPropagation();
+    toggleSelection(key);
+  });
   card.addEventListener("dragstart", (e) => {
     e.dataTransfer.setData("text/plain", card.dataset.key);
     e.dataTransfer.effectAllowed = "move";
@@ -393,7 +410,15 @@ function renderBoard() {
     const count = document.createElement("span");
     count.className = "board-col-count";
     count.textContent = `(${groups[status].length})`;
-    head.append(name, count);
+    // 数字右边的圆角多选按钮：四列共用一个全局开关，点任意一列都能进/出多选
+    const multi = document.createElement("button");
+    multi.type = "button";
+    multi.className = "board-multi-btn";
+    multi.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setMultiSelect(!multiSelect);
+    });
+    head.append(name, count, multi);
     const body = document.createElement("div");
     body.className = "board-col-body";
     if (groups[status].length === 0) {
@@ -425,6 +450,9 @@ function applyViewMode() {
   document.getElementById("event-feed").classList.toggle("hidden", board);
   document.getElementById("status-tabs").classList.toggle("hidden", board);
   document.getElementById("pinned-zone").classList.toggle("hidden", board);
+  // 切视图就退出多选，避免勾选框留在另一个视图里看不见
+  multiSelect = false;
+  document.body.classList.remove("multi-select");
   clearSelection();
   feedLimit = INITIAL_LIMIT;
   renderFeed();
@@ -458,18 +486,31 @@ async function applyStatus(ev, status) {
 // ---- 批量标记 + 撤销 ----
 const UNDO_TIMEOUT_MS = 8000;
 
+// 板视图多选时批量条也露出来，复用「已选 N 条」与清除按钮
 function updateBatchBar() {
   const bar = document.getElementById("batch-bar");
   const n = selectedKeys.size;
-  bar.classList.toggle("hidden", n === 0 || viewMode === "board");
+  bar.classList.toggle("hidden", n === 0 || (viewMode === "board" && !multiSelect));
   document.getElementById("batch-count").textContent = `已选 ${n} 条`;
+  for (const btn of document.querySelectorAll(".board-multi-btn")) {
+    btn.textContent = multiSelect ? `取消多选 (${n})` : "多选";
+    btn.classList.toggle("on", multiSelect);
+  }
+}
+
+function setMultiSelect(on) {
+  multiSelect = on;
+  document.body.classList.toggle("multi-select", on);
+  if (!on) clearSelection();
+  renderFeed();
 }
 
 function paintSelection(key, on) {
-  for (const el of document.querySelectorAll(".event-card")) {
+  // 列表卡 / 板卡 / 置顶卡都带 data-key，一个 key 可能同时出现在多个容器里
+  for (const el of document.querySelectorAll("[data-key]")) {
     if (el.dataset.key !== key) continue;
     el.classList.toggle("selected", on);
-    const check = el.querySelector(".event-check");
+    const check = el.querySelector(".event-check, .board-check");
     if (!check) continue;
     check.classList.toggle("checked", on);
     check.setAttribute("aria-checked", String(on));
@@ -486,9 +527,9 @@ function toggleSelection(key) {
 
 function clearSelection() {
   selectedKeys.clear();
-  for (const el of document.querySelectorAll(".event-card.selected")) {
+  for (const el of document.querySelectorAll("[data-key].selected")) {
     el.classList.remove("selected");
-    const check = el.querySelector(".event-check");
+    const check = el.querySelector(".event-check, .board-check");
     if (!check) continue;
     check.classList.remove("checked");
     check.setAttribute("aria-checked", "false");
@@ -640,6 +681,20 @@ function addCtxItem(menu, label, onClick, opts = {}) {
 function openContextMenu(ev, x, y) {
   const menu = document.getElementById("ctx-menu");
   menu.innerHTML = "";
+  // 列表视图没有列头按钮，这一项同时承担「进入 / 退出」多选
+  addCtxItem(menu, multiSelect ? "退出多选" : "多选", () => {
+    if (multiSelect) {
+      setMultiSelect(false);
+      return;
+    }
+    // 开启多选并把右键这张卡作为首个选中项
+    const key = entityKey(ev);
+    setMultiSelect(true);
+    if (!selectedKeys.has(key)) toggleSelection(key);
+  });
+  const entrySep = document.createElement("div");
+  entrySep.className = "ctx-sep";
+  menu.appendChild(entrySep);
   const current = ev.status || "unread";
   const statusItems = [
     ["unread", "未读"],
@@ -874,6 +929,7 @@ function applyWindowMode() {
     closeContextMenu();
     // 只有搜索框聚焦时 Esc 才清空，没聚焦时只收菜单、不动已有查询
     if (document.activeElement === searchInput && searchInput.value) clearSearch();
+    else if (multiSelect) setMultiSelect(false);
     else if (selectedKeys.size) clearSelection();
   });
   window.addEventListener("blur", closeContextMenu);
