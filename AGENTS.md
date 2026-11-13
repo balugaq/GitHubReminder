@@ -2,6 +2,8 @@
 
 本文件是 AI 助手在本仓库工作的硬性规则。违反任何一条都视为无效工作。
 
+**开发模式（2026-11-14 主人定）：直接在 `master` 单分支上开发，不再使用 git worktree、不建任务分支、不做合并。**
+
 ## 1. Todo 工作流（核心规则）
 
 ### 1.1 依赖链前置声明
@@ -15,47 +17,25 @@
 - 主人明确说「跳过依赖，继续做」才允许例外，且此例外要记录到当天日志。
 
 ### 1.3 认领标记（防重复劳动）
-- 开始执行一个 todo 后，**第一时间**在 `todo.md` 中将其标注为「正在执行」并注明 worktree 分支名，例如：
+- 开始执行一个 todo 后，**第一时间**在 `todo.md` 中将其标注为「正在执行」，例如：
   ```
-  - [~] M6 托盘图标优化（执行中 @worktree/m6-tray, 2026-10-31）
+  - [~] M6 托盘图标优化（执行中 @master, 2026-10-31）
   ```
 - 标记落盘之前，不得开始写任何代码。
 - 完成后改为 `[x]`；中途放弃改回 `[ ]` 并注明原因。
-- 目的：多个并行任务（可能来自不同会话）通过 todo.md 互斥认领，避免重复完成相同内容。
+- 目的：多个会话共用同一个 master 工作区，靠 todo.md 互斥认领避免重复完成同一件事；同一时间只做一个 todo。
 
-## 2. Git Worktree 并行规范
+## 2. 单分支开发规范（master）
 
-### 2.1 Worktree 创建
-- 每个 todo 在独立 worktree 中完成：
-  ```bash
-  git worktree add ../GitHubReminder-wt-<todo名> -b worktree/<todo名>
-  # 创建后必须补两件事：
-  cp .cargo/config.toml ../GitHubReminder-wt-<todo名>/.cargo/config.toml   # 共享 cargo target 目录
-  cd ../GitHubReminder-wt-<todo名> && npm install                          # node_modules 各自独立（仅 16M，不搞共享）
-  ```
-- worktree 命名：`GitHubReminder-wt-<短名>`，分支命名：`worktree/<短名>`。
-- 一个 worktree 只做一个 todo，不混装。
-- `.cargo/config.toml` 把 target-dir 指向 `D:/github_clone/.cargo-target-GitHubReminder`（绝对路径，相对路径在各 worktree 下会解析到不同目录）。若该文件尚未提交进 master，则每个新 worktree 都要手动复制一份；主人提交后新分支自动携带，可省这一步。
-
-### 2.2 合并规则（重要边界）
-- worktree 内**允许正常 commit**（分支上的提交是工作过程记录）。
-- 验收通过后，将分支合并到本地 `master`：
-  ```bash
-  git checkout master && git merge worktree/<短名>
-  ```
-- 合并后删除分支与 worktree：
-  ```bash
-  git branch -d worktree/<短名> && git worktree remove ../GitHubReminder-wt-<短名>
-  ```
-- **红线**：不 push、不碰远程、不 rebase / reset / 改写已有历史。push 与历史改写的决定权归主人；任务级 commit 由 AI 及时完成（见 §5）。
-
-### 2.3 冲突处理
-- 合并前先 `git merge --no-commit --no-ff` 干跑检查冲突（或直接观察 merge 输出）。
-- 有冲突：停下报告主人哪些文件冲突、双方改动是什么，**不擅自仲裁**。
+- 所有改动直接在 `master` 工作区落盘，不创建 worktree、不建任务分支、不做 `git merge`；本地只保留 `master` 一条分支。
+- 开工前 `git status --short` 确认范围；若已有主人未提交的 WIP，停下问主人怎么处理，不擅自 stash / checkout / 覆盖。
+- 同一时间只做一个 todo；任务做完并验收后直接在 master 上 `git commit`（见 §5）。
+- **红线**：不 push、不碰远程、不 rebase / reset / 改写已有历史。push 与历史改写的决定权归主人；任务级 commit 由 AI 及时完成。
+- 将来确需并行开发，须主人明确同意后再恢复分支流程并记入当天日志；AI 不自行引入 worktree。
 
 ## 3. 验收标准
 
-worktree 中的工作要合并进 master，必须满足：
+任务完成、提交前必须满足：
 1. `cargo check` + `cargo clippy`（-D warnings）零警告；
 2. 前端改动经静态核对落地（grep 确认），视觉类标注「待主人目视确认」；
 3. todo.md 状态已同步更新；
@@ -65,7 +45,7 @@ worktree 中的工作要合并进 master，必须满足：
 ## 4. 已知项目约束（速查）
 
 - Rust 工具链不在 Git Bash PATH：`export PATH="$(cygpath -u "$USERPROFILE")/.cargo/bin:$PATH"`。
-- **cargo 构建目录全局共享**（`D:/github_clone/.cargo-target-GitHubReminder`，由 `.cargo/config.toml` 指定）：编译会互斥排队，同时只能有一个 worktree 在编；这是为换取零重复编译有意接受的代价。多 worktree 并发跑 cargo 时后到的会等待，不是卡死。
+- `.cargo/config.toml` 仍把 target-dir 指向 `D:/github_clone/.cargo-target-GitHubReminder`（原为多 worktree 共用；单分支下保留是为了复用已有编译缓存，避免首次全量重编译），单分支下不存在并发编译排队。
 - 主人 `tauri dev` 运行中时 cargo 会撞编译锁（os error 5），编译前确认或轮询等待。
 - 删除大体积构建产物（target 等）时，Windows 安全删除钩子对大目录整树删除会失败（trash 失败即拒绝），需先清零文件内容再删，或交主人手动 `rmdir /s /q`。
 - 本机访问 GitHub API 依赖 Watt Toolkit MITM + native-tls + 强制 IPv4，勿动这三层。
@@ -77,7 +57,7 @@ worktree 中的工作要合并进 master，必须满足：
 - 一个任务做完并通过验收后**立即 commit**，不积压到下一个任务、不等主人来问。todo.md 状态同步与验收本身算任务的一部分，一起提交。
 - 原则上「一个任务一个 commit」。确实拆不开（同一文件被多轮任务改动、无法用文件级边界区分）时才合并为一个 commit，但 message 要概括每项改动，并在汇报里说明合并原因。
 - 提交前用 `git status --short` + `git diff --stat` 确认范围，不夹带无关文件、不夹带构建产物与本地配置。
-- **红线不变**：不 push、不碰远程、不 rebase / reset / 改写已有历史。本节覆盖 §2.2 里「提交决定权归主人」的旧表述：任务级 commit 由 AI 主动完成，主人保留的是 push 与历史改写的决定权。
+- **红线不变**：不 push、不碰远程、不 rebase / reset / 改写已有历史。任务级 commit 由 AI 主动完成，主人保留的是 push 与历史改写的决定权。
 - 验收不通过、编译/静态核对有未解错误时**不许提交**，只汇报阻塞原因。
 
 ### 5.2 每次 commit 前的强制检查（硬闸门）

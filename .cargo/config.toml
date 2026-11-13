@@ -1,3 +1,3 @@
-# 所有 worktree 共用同一构建目录（编译排队互斥是接受的代价，换来 0 重复编译）
+# 沿用固定绝对 target-dir，复用已有编译缓存避免首次全量重编译
 [build]
 target-dir = "D:/github_clone/.cargo-target-GitHubReminder"

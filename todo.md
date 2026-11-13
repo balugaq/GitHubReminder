@@ -225,9 +225,11 @@
   - 落地：`zstart.bat` 先 `cd /d "%~dp0"`（外部脚本调过来时工作目录不一定是项目目录），最多 60 轮探 `explorer.exe`（每轮约 1s），就绪后再给约 3s 缓冲，最后仍 `call npm run tauri dev`；行尾用 CRLF 避免 cmd 解析 label / goto 的兼容问题。`lib.rs` 加 `AppState.frontend_ready: AtomicBool` + `report_frontend_ready` command + `spawn_frontend_ready_guard`（6/10/14s 三段检查，只在未就绪时 `w.reload()`，最多 3 次，收到上报立即收手，且必须在 `app.manage(state)` 之后启动）。`main.js` 顶层一行 `invoke("report_frontend_ready")`：脚本能执行即代表文档已加载，不必等 init 跑完，业务初始化异常也不会触发无意义刷新。
   - 验收：`node --check` 通过、`npm test` 41/41、`cargo check` 通过、`cargo clippy --all-targets -- -D warnings` 零代码警告（首跑撞到共享 target 目录偶发 `os error 5` 资源写权限错误，重跑 `PIPESTATUS=0` 通过）、`cargo test --lib` 49/49、暂存敏感信息命中 0 条。**开机冷启动实测待主人确认**。
 
-## 本轮任务（2026-11-14）：右键菜单多选作用域
+## 本轮任务（2026-11-14）：右键菜单多选作用域 / 单分支切换
 
-依赖链（已发给主人确认）：`T3 板视图多选 / T4 批量复制（均已完成） → 本项`，无未完成前置。
+> **自 2026-11-14 起取消 git worktree，改为 master 单分支直改**（主人定）。本文件上方历史条目里的 `@worktree/...` 是当时的执行痕迹，保留不改；新任务一律标 `@master`。
+
+依赖链（已发给主人确认）：`T3 板视图多选 / T4 批量复制（均已完成） → C1`；`C2 文档同步` 独立、无前置。C1 仍按当时的 worktree 流程完成，C2 起按新规则在 master 直改。
 主人 2026-11-14 拍板：① 多选状态下右键**未选中**的卡 → 只操作该卡、保留选区；② 置顶/删除批量化 → 前端循环现有单例命令，不动 Rust；③ 立即开工。按 §2 走单 worktree `worktree/ctx-batch`。
 
 - [x] **C1 多选状态下右键已选中卡片，菜单操作应作用于整个选区**（完成 2026-11-14 @worktree/ctx-batch）
@@ -237,3 +239,10 @@
   - 右键未选中的卡时整份菜单退化为单卡语义（含「复制链接」），选区保留不变；非多选状态行为与改动前一致。三类卡（列表 / 置顶 / 板卡）共用 `bindCard`，改一处全覆盖。
   - 验收：`node --check` 三文件通过、`npm test` 46/46（新增 5）、`cargo check` 通过、`cargo clippy --all-targets -- -D warnings` 零代码警告（仅共享 incremental 锁的 `os error 5` 环境警告）、`cargo test --lib` 49/49、grep 全量复查 3 处 Edit 均落地。**菜单文案变宽与交互待主人在 `npm run tauri dev` 下目视确认**。
   - 已知取舍：批量置顶/删除走前端循环而非后端原子命令，N 次 invoke + N 次写盘；置顶超 3 张时会出现「成功 K 条 · 失败 M 条」，已由提示条显式告知。若以后要严格原子，再补 Rust 批量命令。
+
+- [x] **C2 取消 git worktree，改为 master 单分支开发 + 文档同步**（完成 2026-11-14 @master 直改）
+  - 主人 2026-11-14 定：项目不再需要 worktree，直接在 master 单分支开发，顺手改文档。依赖链：独立，无前置。
+  - `AGENTS.md`：文首加开发模式声明；§2 整节由「Git Worktree 并行规范」改写为「单分支开发规范（master）」（不建 worktree / 任务分支、不合并、开工前查工作区、有主人 WIP 停下问、将来要并行须主人同意）；§1.3 认领示例去掉 worktree 分支名改 `@master`，目的改为「多会话共用同一工作区靠 todo.md 互斥」；§3 首句由「合并进 master 必须满足」改为「任务完成、提交前必须满足」；§4 共享 target-dir 一条改写为单分支下的缓存复用说明；§5.1 删掉对已不存在的 §2.2 的引用。
+  - `.cargo/config.toml` 注释去掉「所有 worktree 共用」表述（配置项本身保留，避免首次全量重编译）；`docs/HANDOFF.md` 构建章节补一句开发模式与 `AGENTS.md` 指向；`README.md` / `PLAN.md` 无相关表述，未改。
+  - 顺带根治历史大坑：旧 §2.2「先删分支再删 worktree」顺序错误两天内踩了 2 次，worktree 机制移除后该坑不复存在。
+  - 验收：grep 全仓复核——AGENTS.md 仅剩「不再使用 / 不自行引入」这类说明性提及，创建与合并流程 0 处；`.cargo/config.toml` 与 `docs/HANDOFF.md` 零残留；todo.md 仅历史条目保留。本地 `git branch` 只剩 master、工作区干净。本任务不涉代码，未跑 cargo / npm test。暂存敏感信息检查 4 个文件、无命中。**未 push、未碰远程**；远端遗留 `origin/worktree/m6-manage` 分支按红线不动，交主人决定。

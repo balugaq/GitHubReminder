@@ -23,6 +23,8 @@
 
 ## 构建 & 运行
 
+开发模式：直接在 `master` 单分支上开发，不建任务分支、不做合并；协作与提交规则见仓库根目录 `AGENTS.md`。
+
 ```bash
 npm install
 npm test                  # node --test，搜索逻辑单测
