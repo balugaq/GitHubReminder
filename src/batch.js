@@ -75,6 +75,25 @@
     return out;
   }
 
+  // 右键未选中的卡按主人拍板只操作该卡、选区原样保留，避免误伤别的已选卡
+  function contextMenuScope(ev, selection, events, keyOf, multiSelect) {
+    const chosen = new Set(Array.from(selection || []));
+    const batch = !!multiSelect && chosen.has(keyOf(ev));
+    const targets = batch
+      ? (Array.isArray(events) ? events : []).filter((item) => chosen.has(keyOf(item)))
+      : [ev];
+    // 选区在轮询/删除后全失效时退回单卡，别让菜单显示批量却什么都不做
+    return targets.length > 0 ? { batch, targets } : { batch: false, targets: [ev] };
+  }
+
+  // 选区字段混杂时返回 undefined，菜单的 ✓ 与置顶文案据此不冒充整批状态
+  function uniformValue(targets, pick) {
+    const items = Array.isArray(targets) ? targets : [];
+    if (items.length === 0) return undefined;
+    const first = pick(items[0]);
+    return items.every((item) => pick(item) === first) ? first : undefined;
+  }
+
   const api = {
     normalize,
     buildBatch,
@@ -82,6 +101,8 @@
     captureUndo,
     restoreSelection,
     orderedNoticeKeys,
+    contextMenuScope,
+    uniformValue,
   };
   root.GhrBatch = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

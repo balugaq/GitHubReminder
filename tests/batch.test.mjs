@@ -137,3 +137,63 @@ test("orderedNoticeKeys 空输入返回空数组", () => {
   assert.deepEqual(normKeys(B.orderedNoticeKeys(new Set(), [], keyOf)), []);
   assert.deepEqual(normKeys(B.orderedNoticeKeys(null, null, keyOf)), []);
 });
+
+// ---- 右键菜单作用域 ----
+const scopeCard = (over = {}) => ({
+  repo: "owner/repo",
+  number: 123,
+  status: "unread",
+  pinned: false,
+  ...over,
+});
+const scopeKey = (ev) => `${(ev.repo || "").toLowerCase()}:${ev.number ?? ""}`;
+const scopeEvents = [
+  scopeCard({ number: 123, status: "unread" }),
+  scopeCard({ number: 124, status: "done" }),
+  scopeCard({ number: 125, status: "read" }),
+];
+
+test("contextMenuScope 右键已选中的卡 → 操作扩展到整个选区", () => {
+  const selection = new Set(["owner/repo:123", "owner/repo:124", "owner/repo:99"]);
+  const scope = B.contextMenuScope(scopeEvents[0], selection, scopeEvents, scopeKey, true);
+  assert.equal(scope.batch, true);
+  assert.deepEqual(plain(scope.targets.map((t) => t.number)), [123, 124]);
+  // 失效的 99 只是被剪出 targets，选区本身不被改动
+  assert.deepEqual(plain(selection), ["owner/repo:123", "owner/repo:124", "owner/repo:99"]);
+});
+
+test("contextMenuScope 右键未选中的卡 → 只操作该卡，选区原样保留", () => {
+  const selection = new Set(["owner/repo:124"]);
+  const scope = B.contextMenuScope(scopeEvents[0], selection, scopeEvents, scopeKey, true);
+  assert.equal(scope.batch, false);
+  assert.deepEqual(plain(scope.targets.map((t) => t.number)), [123]);
+  assert.deepEqual(plain(selection), ["owner/repo:124"]);
+});
+
+test("contextMenuScope 非多选状态即使卡在选区里也只操作单卡", () => {
+  const selection = new Set(["owner/repo:123", "owner/repo:124"]);
+  const scope = B.contextMenuScope(scopeEvents[0], selection, scopeEvents, scopeKey, false);
+  assert.equal(scope.batch, false);
+  assert.equal(scope.targets.length, 1);
+  assert.equal(scope.targets[0].number, 123);
+});
+
+test("contextMenuScope 选区全失效时退回单卡，不出现空批量菜单", () => {
+  const selection = new Set(["owner/repo:123", "owner/repo:999"]);
+  const scope = B.contextMenuScope(scopeEvents[0], selection, [scopeEvents[1]], scopeKey, true);
+  assert.equal(scope.batch, false);
+  assert.equal(scope.targets.length, 1);
+  assert.equal(scope.targets[0].number, 123);
+});
+
+test("uniformValue 只在整批一致时返回值，混杂与空输入都不打勾", () => {
+  const statusOf = (t) => t.status || "unread";
+  assert.equal(B.uniformValue([scopeEvents[0]], statusOf), "unread");
+  assert.equal(B.uniformValue(scopeEvents, statusOf), undefined);
+  assert.equal(
+    B.uniformValue([scopeCard({ status: "done" }), scopeCard({ status: "done" })], statusOf),
+    "done"
+  );
+  assert.equal(B.uniformValue([], statusOf), undefined);
+  assert.equal(B.uniformValue(scopeEvents, (t) => !!t.pinned), false);
+});

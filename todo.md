@@ -224,3 +224,16 @@
   - **结论（最小改动组合）= ① + ③，不动 ②**：脚本层把失败概率压低，应用层把残余失败闭环，合计 3 个文件、约 60 行，不动启动方式与开发节奏。
   - 落地：`zstart.bat` 先 `cd /d "%~dp0"`（外部脚本调过来时工作目录不一定是项目目录），最多 60 轮探 `explorer.exe`（每轮约 1s），就绪后再给约 3s 缓冲，最后仍 `call npm run tauri dev`；行尾用 CRLF 避免 cmd 解析 label / goto 的兼容问题。`lib.rs` 加 `AppState.frontend_ready: AtomicBool` + `report_frontend_ready` command + `spawn_frontend_ready_guard`（6/10/14s 三段检查，只在未就绪时 `w.reload()`，最多 3 次，收到上报立即收手，且必须在 `app.manage(state)` 之后启动）。`main.js` 顶层一行 `invoke("report_frontend_ready")`：脚本能执行即代表文档已加载，不必等 init 跑完，业务初始化异常也不会触发无意义刷新。
   - 验收：`node --check` 通过、`npm test` 41/41、`cargo check` 通过、`cargo clippy --all-targets -- -D warnings` 零代码警告（首跑撞到共享 target 目录偶发 `os error 5` 资源写权限错误，重跑 `PIPESTATUS=0` 通过）、`cargo test --lib` 49/49、暂存敏感信息命中 0 条。**开机冷启动实测待主人确认**。
+
+## 本轮任务（2026-11-14）：右键菜单多选作用域
+
+依赖链（已发给主人确认）：`T3 板视图多选 / T4 批量复制（均已完成） → 本项`，无未完成前置。
+主人 2026-11-14 拍板：① 多选状态下右键**未选中**的卡 → 只操作该卡、保留选区；② 置顶/删除批量化 → 前端循环现有单例命令，不动 Rust；③ 立即开工。按 §2 走单 worktree `worktree/ctx-batch`。
+
+- [x] **C1 多选状态下右键已选中卡片，菜单操作应作用于整个选区**（完成 2026-11-14 @worktree/ctx-batch）
+  - 根因：`main.js::openContextMenu` 只用全局 `multiSelect` 换了两处文案（多选开关 / 复制项），状态/置顶/删除回调仍硬绑右键单卡 `ev`，从不查 `selectedKeys.has(entityKey(ev))`；状态项 ✓ 与置顶文案也只反映单卡，选区混杂时会误导。
+  - 实现：`batch.js` 新增纯函数 `contextMenuScope(ev, selection, events, keyOf, multiSelect)`（右键卡在选区里 → 取全选区并剪掉失效项；否则只取单卡且选区原样保留；选区全失效退回单卡）与 `uniformValue`（字段全一致才返回值，供 ✓ 与置顶文案判定），`tests/batch.test.mjs` 加 5 个单测。
+  - `main.js::openContextMenu` 按作用域分发：菜单项带 ` · N 条` 后缀；四个状态项走 `applyStatusToTargets` → 复用抽出的 `runBatchStatus`（`set_status_batch` + 双回滚撤销现场，批量条共用同一入口）；置顶/删除按主人拍板走 `loopOnTargets` 串行循环 `set_pin` / `delete_event`，汇总成功/失败数并 flash；删除后 `pruneSelection` + `updateBatchBar`；复制项改用 `scope.batch` 判定，批量仍按选择顺序走 `orderedNoticeKeys`。
+  - 右键未选中的卡时整份菜单退化为单卡语义（含「复制链接」），选区保留不变；非多选状态行为与改动前一致。三类卡（列表 / 置顶 / 板卡）共用 `bindCard`，改一处全覆盖。
+  - 验收：`node --check` 三文件通过、`npm test` 46/46（新增 5）、`cargo check` 通过、`cargo clippy --all-targets -- -D warnings` 零代码警告（仅共享 incremental 锁的 `os error 5` 环境警告）、`cargo test --lib` 49/49、grep 全量复查 3 处 Edit 均落地。**菜单文案变宽与交互待主人在 `npm run tauri dev` 下目视确认**。
+  - 已知取舍：批量置顶/删除走前端循环而非后端原子命令，N 次 invoke + N 次写盘；置顶超 3 张时会出现「成功 K 条 · 失败 M 条」，已由提示条显式告知。若以后要严格原子，再补 Rust 批量命令。

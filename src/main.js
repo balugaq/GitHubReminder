@@ -583,9 +583,8 @@ function hideUndoToast() {
   document.getElementById("undo-toast").classList.remove("show");
 }
 
-async function applyBatchStatus() {
-  const status = document.getElementById("batch-status").value;
-  const targets = allEvents.filter((ev) => selectedKeys.has(entityKey(ev)));
+// 批量改状态只留一个入口：批量条与右键菜单共用，撤销现场口径不漂移
+async function runBatchStatus(targets, status) {
   if (targets.length === 0) {
     clearSelection();
     return;
@@ -602,6 +601,11 @@ async function applyBatchStatus() {
   clearSelection();
   renderFeed();
   showUndoToast(payload.repos.length);
+}
+
+async function applyBatchStatus() {
+  const status = document.getElementById("batch-status").value;
+  await runBatchStatus(allEvents.filter((ev) => selectedKeys.has(entityKey(ev))), status);
 }
 
 async function undoBatch() {
@@ -657,6 +661,56 @@ async function deleteEntity(ev) {
   }
 }
 
+// 串行循环单例命令：每次 invoke 返回的全量实体都是下一步的最新输入
+async function loopOnTargets(targets, command, argOf, label) {
+  let ok = 0;
+  let fail = 0;
+  let lastErr = "";
+  for (const target of targets) {
+    try {
+      allEvents = await invoke(command, argOf(target));
+      ok += 1;
+    } catch (err) {
+      fail += 1;
+      if (typeof err === "string") lastErr = err;
+    }
+  }
+  renderFeed();
+  // 置顶有 3 张上限，批量可能只成功一部分，半成功不能闷声过去
+  flash(
+    fail > 0
+      ? `${label} ${ok} 条 · 失败 ${fail} 条${lastErr ? `（${lastErr}）` : ""}`
+      : `${label} ${ok} 条`
+  );
+}
+
+function applyStatusToTargets(scope, status) {
+  if (scope.batch) return runBatchStatus(scope.targets, status);
+  return applyStatus(scope.targets[0], status);
+}
+
+function applyPinToTargets(scope, pinned) {
+  if (!scope.batch) return setPin(scope.targets[0], pinned);
+  return loopOnTargets(
+    scope.targets,
+    "set_pin",
+    (t) => ({ repo: t.repo, number: t.number ?? null, pinned }),
+    pinned ? "已置顶" : "已取消置顶"
+  );
+}
+
+async function deleteTargets(scope) {
+  if (!scope.batch) return deleteEntity(scope.targets[0]);
+  await loopOnTargets(
+    scope.targets,
+    "delete_event",
+    (t) => ({ repo: t.repo, number: t.number ?? null }),
+    "已删除"
+  );
+  pruneSelection();
+  updateBatchBar();
+}
+
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -701,6 +755,8 @@ function addCtxItem(menu, label, onClick, opts = {}) {
 function openContextMenu(ev, x, y) {
   const menu = document.getElementById("ctx-menu");
   menu.innerHTML = "";
+  const scope = BATCH.contextMenuScope(ev, selectedKeys, allEvents, entityKey, multiSelect);
+  const suffix = scope.batch ? ` · ${scope.targets.length} 条` : "";
   // 列表视图没有列头按钮，这一项同时承担「进入 / 退出」多选
   addCtxItem(menu, multiSelect ? "退出多选" : "多选", () => {
     if (multiSelect) {
@@ -715,26 +771,29 @@ function openContextMenu(ev, x, y) {
   const entrySep = document.createElement("div");
   entrySep.className = "ctx-sep";
   menu.appendChild(entrySep);
-  const current = ev.status || "unread";
   const statusItems = [
     ["unread", "未读"],
     ["read", "已读"],
     ["in_progress", "处理中"],
     ["done", "已完成"],
   ];
+  // 选区状态不一致时不打勾，别让单卡的 ✓ 冒充整批状态
+  const uniformStatus = BATCH.uniformValue(scope.targets, (t) => t.status || "unread");
   for (const [status, label] of statusItems) {
-    addCtxItem(menu, label, () => applyStatus(ev, status), { checked: current === status });
+    addCtxItem(menu, label + suffix, () => applyStatusToTargets(scope, status), {
+      checked: uniformStatus === status,
+    });
   }
-  // 置顶（钉住）——第 4 张会被后端拒绝
-  addCtxItem(menu, ev.pinned ? "取消置顶" : "置顶", () => setPin(ev, !ev.pinned), {
-    checked: !!ev.pinned,
-  });
+  // 置顶（钉住）——第 4 张会被后端拒绝；混杂选区统一按「全部置顶」处理
+  const allPinned = BATCH.uniformValue(scope.targets, (t) => !!t.pinned) === true;
+  addCtxItem(menu, (allPinned ? "取消置顶" : "置顶") + suffix,
+    () => applyPinToTargets(scope, !allPinned), { checked: allPinned });
   const sep = document.createElement("div");
   sep.className = "ctx-sep";
   menu.appendChild(sep);
-  // 多选状态下复制的是选中通知的文案（QQ 通知格式，去掉大标题与项目标题），顺序即选择顺序
-  addCtxItem(menu, multiSelect ? "复制所选通知" : "复制链接", async () => {
-    if (!multiSelect) {
+  // 选区作用域下复制的是选中通知的文案（QQ 通知格式，去掉大标题与项目标题），顺序即选择顺序
+  addCtxItem(menu, scope.batch ? "复制所选通知" : "复制链接", async () => {
+    if (!scope.batch) {
       const ok = await copyText(ev.url);
       flash(ok ? "已复制链接" : "复制失败");
       return;
@@ -752,7 +811,7 @@ function openContextMenu(ev, x, y) {
       flash(typeof err === "string" ? err : "复制失败");
     }
   });
-  addCtxItem(menu, "删除", () => deleteEntity(ev), { danger: true });
+  addCtxItem(menu, "删除" + suffix, () => deleteTargets(scope), { danger: true });
 
   menu.classList.remove("hidden");
   // 先量尺寸再定位，避免贴边溢出
