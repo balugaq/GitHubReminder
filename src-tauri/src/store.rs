@@ -88,11 +88,90 @@ pub struct WindowRect {
     pub maximized: bool,
 }
 
+// 项目外观属性：饼图扇区色 + 通知界面文字色。旧存档缺该字段时按项目名稳定生成。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectStyle {
+    pub color: String,
+    pub text_color: String,
+}
+
+impl Default for ProjectStyle {
+    fn default() -> Self {
+        Self {
+            color: PROJECT_PALETTE[0].into(),
+            text_color: "#ffffff".into(),
+        }
+    }
+}
+
+// 统计流水：一条通知事件一行，按项目聚合出各时间窗口的占比
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StatEvent {
+    pub repo: String,
+    pub at: i64, // unix 秒
+}
+
+pub const PROJECT_PALETTE: [&str; 12] = [
+    "#26c281", "#4a90d9", "#f5a623", "#8b5cf6", "#ec4899", "#22d3ee", "#ef4444", "#facc15",
+    "#14b8a6", "#a3e635", "#fb923c", "#c084fc",
+];
+
+fn default_bot_keywords() -> Vec<String> {
+    vec!["dependabot[bot]".into()]
+}
+
+fn repo_hash(repo: &str) -> usize {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in repo.to_lowercase().bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h as usize
+}
+
+// 缺失即补：同一项目名永远拿到同一个色，新增项目优先避开已占用色。
+// 按 repo 排序后再分配，保证配置读入顺序变化时结果仍稳定。
+pub fn ensure_project_styles(cfg: &mut Config, repos: &[String]) -> bool {
+    let mut pending: Vec<String> = repos
+        .iter()
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty() && !cfg.project_styles.contains_key(r))
+        .collect();
+    pending.sort();
+    pending.dedup();
+    if pending.is_empty() {
+        return false;
+    }
+    let mut used: std::collections::HashSet<String> = cfg
+        .project_styles
+        .values()
+        .map(|s| s.color.to_lowercase())
+        .collect();
+    for repo in pending {
+        let start = repo_hash(&repo) % PROJECT_PALETTE.len();
+        let color = (0..PROJECT_PALETTE.len())
+            .map(|i| PROJECT_PALETTE[(start + i) % PROJECT_PALETTE.len()])
+            .find(|c| !used.contains(&c.to_lowercase()))
+            .unwrap_or(PROJECT_PALETTE[start]);
+        used.insert(color.to_lowercase());
+        cfg.project_styles.insert(
+            repo,
+            ProjectStyle {
+                color: color.into(),
+                ..ProjectStyle::default()
+            },
+        );
+    }
+    true
+}
+
 fn default_true() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
     // 凭据管理器是唯一持久化位置；save 落盘前会剔除，仅 API 响应与内存中可见
@@ -137,9 +216,50 @@ pub struct Config {
     // status / pinned 由前端经对应命令置位。旧版 events 字段不兼容，serde 忽略即丢弃（不迁移）。
     #[serde(default)]
     pub entities: Vec<Entity>,
-    // 统计：维度("repo" 或 "repo#n") -> 类型(kind) -> 次数，跨重启累计
+    // 旧统计（repo -> kind -> 次数）：不再写入，保留字段只为兼容旧存档读取
     #[serde(default)]
     pub stats: BTreeMap<String, BTreeMap<String, u64>>,
+    // bot 关键词（contains 匹配 issue/pr 发起者），命中项统一下沉到项目通知末尾
+    #[serde(default = "default_bot_keywords")]
+    pub bot_keywords: Vec<String>,
+    // 项目 -> 饼图色 / 通知文字色；缺项在读取时自动生成
+    #[serde(default)]
+    pub project_styles: BTreeMap<String, ProjectStyle>,
+    // 通知流水（每条事件一行），按时间窗口聚合出统计占比
+    #[serde(default)]
+    pub stat_events: Vec<StatEvent>,
+}
+
+// 手写而非 derive：Vec 的 Default 是空，会把 bot 关键词默认值冲掉；
+// 结构体字面量列全字段也能让以后新增字段立刻被编译器提醒。
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            token: None,
+            proxy: None,
+            notify: true,
+            poll_interval: None,
+            github_username: None,
+            qq_notify: false,
+            qq_autoconfig: false,
+            qq_relay_port: None,
+            qq_app_id: None,
+            qq_app_secret: None,
+            qq_openid: None,
+            window: None,
+            watches: Vec::new(),
+            cursor_issues: HashMap::new(),
+            cursor_release: HashMap::new(),
+            cursor_comment: HashMap::new(),
+            cursor_state: HashMap::new(),
+            cursor_closed: HashMap::new(),
+            entities: Vec::new(),
+            stats: BTreeMap::new(),
+            bot_keywords: default_bot_keywords(),
+            project_styles: BTreeMap::new(),
+            stat_events: Vec::new(),
+        }
+    }
 }
 
 pub fn load(path: &PathBuf) -> Config {
@@ -304,5 +424,40 @@ mod tests {
             "内存里的值不应被改动"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn default_config_carries_bot_keyword() {
+        let cfg = Config::default();
+        assert_eq!(cfg.bot_keywords, vec!["dependabot[bot]".to_string()]);
+        // 旧存档没有该字段时 serde 也要补上同一个默认
+        let back: Config = serde_json::from_str(r#"{"watches":[]}"#).unwrap();
+        assert_eq!(back.bot_keywords, cfg.bot_keywords);
+    }
+
+    #[test]
+    fn project_colors_are_stable_and_distinct() {
+        let repos = vec![
+            "o/r".into(),
+            "o/r2".into(),
+            "octocat/hello-world".into(),
+        ];
+        let mut a = Config::default();
+        ensure_project_styles(&mut a, &repos);
+        let reversed: Vec<String> = repos.iter().rev().cloned().collect();
+        let mut b = Config::default();
+        ensure_project_styles(&mut b, &reversed);
+        assert_eq!(a.project_styles, b.project_styles, "分配顺序不应影响结果");
+        assert_eq!(a.project_styles.len(), 3);
+        let colors: std::collections::HashSet<String> =
+            a.project_styles.values().map(|s| s.color.clone()).collect();
+        assert_eq!(colors.len(), 3, "三个项目应拿到三个不同的色");
+        for s in a.project_styles.values() {
+            assert_eq!(s.text_color, "#ffffff");
+        }
+        assert!(
+            !ensure_project_styles(&mut a, &repos),
+            "已存在的项目不该重复生成"
+        );
     }
 }

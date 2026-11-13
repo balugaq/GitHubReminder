@@ -127,3 +127,71 @@
 - [x] M5 NSIS 打包 + 托盘图标 + 关闭隐藏到托盘（GitHub Reminder_0.1.0_x64-setup.exe，1.71 MiB，待实测）
 - [x] GitHub CI（check+clippy）/ Release（tag 推送自动发布 NSIS）/ Dependabot（cargo/npm/actions 每周）
 - [x] docs/HANDOFF.md 交接文档 + .gitattributes + .gitignore 精简
+
+## 本轮任务（2026-11-13）：板视图多选 / QQ 分组通知 / 启动自愈 / 按项目统计
+
+依赖链（已发给主人确认；主人本轮明确「逐项执行，1 个 worktree，单 agent」）：
+`T1 → T2 → T3 → T4`；`T1 → T5 → T6`；`T1 → T7`；`T8` 独立。
+整链：`T1 → { T2 → { T3 → T4 }, T5 → T6, T7 }` + `T8(独立)`。
+共享 index.html / main.js / styles.css / store.rs / lib.rs / manage.*，按主人指定走**单 worktree 串行**（`worktree/nov13`），逐条 commit。
+
+优先级：**P0** T1（地基）→ **P1** T2/T3/T4（QQ 通知 + 板视图多选，本轮主线）→ **P2** T5/T6/T7（统计改版 + 项目外观）→ **P3** T8（独立、改动小，收尾做）。
+
+### 实现假设（拿不准的先按此落地，交付时单列待主人确认）
+- `[@//me/]` 判定沿用现有口径：assignee 含设置里的 GitHub 用户名才显示；字面标记按主人给的 `[@//me/]`。
+- 非 release 小通知**不带时间前缀**（严格照抄主人给的 issue 模板），release 带 `[YY-MM HH:mm:ss]`；排序一律按 `created_at` 升序（最旧先发）。
+- 动作词：issue/pr 新建「开启了」、关闭「关闭了」、状态「更新了状态」、评论「有新消息」；release 用「发布了 <版本> 版本」。
+- 「折叠 bot」= 把命中关键词的通知统一挪到该项目列表末尾，格式不变，不额外加标题。
+- 「通知数量」口径 = 每次轮询产生的一条 github::Event；旧 `stats`（repo→kind 计数）不再读取、不再写入，旧存档字段由 serde 忽略。历史视图在流水为空时用现有 entities 按 repo 兜底一次，避免空图。
+- 统计时间窗口按本机自然日 / 自然周（周一起）/ 自然月（1 日起）/ 全部。
+- 右键菜单「多选」= 开启多选并顺手把右键那张卡作为首个选中项；四列列头「多选」按钮共用一个全局开关。
+
+### P0
+- [x] **T1 数据地基：项目属性 / bot 关键词 / 统计流水**（完成 2026-11-13 @worktree/nov13）
+  - `store.rs`：新增 `ProjectStyle`（饼图色 + 通知文字色）、`StatEvent` 流水、`bot_keywords`（默认 `["dependabot[bot]"]`；**手写 `Config::default`**，因为 derive 会给 Vec 空默认值、把 bot 默认冲掉）；12 色稳定调色板 + `ensure_project_styles`（FNV hash 按 repo 稳定分配、新增项目优先避开已占用色）。
+  - 新增 `stats.rs`：本机自然日 / 自然周（周一起）/ 自然月 / 全部四窗口边界、按项目聚合、流水 5000 条滚动裁剪、流水为空时用 entities 兜底历史视图；配 4 个单测。
+  - `lib.rs`：`record_entities` 改写流水（ISO→unix 秒）并停止累计旧 stats；新增 5 个命令（`get_project_styles` / `set_project_style` / `get_bot_keywords` / `set_bot_keywords` / `get_stats_ranges`）并注册。`format_selected_notices` 归 T2（与 notice.rs 格式化同源）。
+  - 验收：cargo check、`cargo clippy --all-targets -- -D warnings` 零代码警告（os error 5 为共享 incremental 锁的环境警告）、`cargo test --lib` 46/46、`npm test` 26/26。
+  - `store.rs`：Config 新增 `bot_keywords: Vec<String>`（默认 `["dependabot[bot]"]`）、`project_styles: BTreeMap<String, ProjectStyle>`（`color` + `textColor`）、`stat_events: Vec<StatEvent>`（`repo` + `at` 时间戳，上限 5000 条滚动裁剪）。
+  - 新增稳定调色板 + `ensure_project_style`（按项目名确定性 hash 分配鲜明色，缺失自动生成并落盘），文字色默认 `#ffffff`。
+  - `lib.rs`：`record_entities` 顺带写 `stat_events`；新增命令 `get_project_styles` / `set_project_style` / `get_bot_keywords` / `set_bot_keywords` / `get_stats_ranges` / `format_selected_notices`。
+  - 验收：cargo check + clippy -D warnings 零警告，新增 Rust 单测（默认色稳定、bot contains 匹配、时间窗口边界、流水裁剪）。
+
+### P1
+- [ ] **T2 QQ 通知改版：按项目分组 + bot 折叠 + 新文案**（依赖 T1）
+  - 抽 `src-tauri/src/notice.rs`：固定标题 `[GitHubReminder] 通知 · GitHub 动态`、项目标题 `<repo> · <N> 个通知`、小通知按时间升序、块间空行、bot 命中关键词（contains author）统一排到该项目末尾。
+  - `spawn_qq_push` 改为**每个项目单独发一条消息**（分多次推送），不再合成一条大文本。
+  - `format_selected_notices` 命令复用同一格式化逻辑，供 T4 复制选中项用（不含大标题/项目标题，只留块间空行）。
+  - 验收：Rust 单测覆盖分组/升序/`[@//me/]` 条件/release 格式/bot 排末尾/空行；旧 `qq_tests` 按新格式重写；cargo test --lib 全过。
+
+- [ ] **T3 板视图多选入口：右键「多选」+ 四列列头「多选」按钮**（依赖 T2 的格式化命令）
+  - `main.js` 新增全局 `multiSelect` 状态；`buildBoardCard` 加勾选框，跨列可选（不限制分类）；`selectedKeys` 的 Set 插入顺序即「选择顺序」。
+  - 右键菜单加「多选」项（开启并选中当前卡）；每列 `board-col-count` 右边加圆角矩形「多选 / 取消多选」按钮，toggle 全局状态并同步四个按钮文案与高亮。
+  - 多选状态下右键菜单其余项（状态/置顶/删除）行为不变。
+  - 验收：`npm test` 全过、`node --check`、grep 静态核对；视觉待主人目视确认。
+
+- [ ] **T4 多选「复制链接」改为按选择顺序复制通知文本**（依赖 T3）
+  - 多选状态下点「复制链接」→ 按 `selectedKeys` 顺序 invoke `format_selected_notices` → 写剪贴板；非多选状态仍复制单卡 url。
+  - 验收：`npm test` 全过、grep 确认分支；复制结果待主人实测。
+
+### P2
+- [ ] **T5 统计改版：今日/本周/本月/历史 4 个 bstats 风格饼图**（依赖 T1）
+  - `index.html` 统计视图改成 4 个 tab + SVG 饼图容器 + tooltip 文本框；抽 `src/chart.js` 纯逻辑（分窗口聚合、占比、扇形 path、引出线标签布局、柱状图数据）配 `tests/chart.test.mjs`。
+  - 深色卡片 + 固定鲜艳项目色 + `名称: xx.xx%` 引出线标签；hover 扇形沿半径外移并放大，tooltip 显示项目名 / `Share: xx.xx%` / `Total: N`。
+  - 旧「每行事件类型」统计视图删掉，不保留。
+  - 验收：`npm test` 全过、`node --check`、grep 静态核对；视觉待主人目视确认。
+
+- [ ] **T6 柱状图：点击切换，按项目划分通知数量**（依赖 T5）
+  - 统计页加「饼图 / 柱状图」切换按钮，柱状图沿用同一份窗口数据与项目色。
+  - 验收：`npm test` 全过、grep 确认落地；视觉待主人目视确认。
+
+- [ ] **T7 设置：项目颜色 / 文字颜色可改 + 通知界面应用文字色**（依赖 T1）
+  - `manage.html` 设置页加「bot 关键词」输入（逗号分隔）+ 项目样式列表（每行项目名 + 颜色选择器 + 文字颜色选择器）。
+  - `manage.js` 读写新命令，改完 emit 同步主窗口；`main.js` 卡片按 `repo` 应用项目文字颜色（列表卡、板卡、置顶卡）。
+  - 验收：`npm test` 全过、`node --check`、clippy 零警告；视觉待主人目视确认。
+
+### P3
+- [ ] **T8 开机 zstart.bat 启动 WebView 显示失败：利弊分析 + 最小改动自愈**（独立）
+  - 讨论「启动时机 / 启动方式 / WebView 检查」三条路线并给结论（写入本条完成说明）。
+  - 落地：`zstart.bat` 等桌面/网络栈就绪再拉起；应用侧加「前端就绪上报 + 延时检查，未就绪自动 reload」兜底，覆盖延迟猜不准的残余场景。不动启动方式（保持 `tauri dev` 迭代节奏）。
+  - 验收：cargo check + clippy 零警告、grep 确认落地；开机实测待主人确认。

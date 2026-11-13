@@ -1,5 +1,6 @@
 mod github;
 mod qqrelay;
+mod stats;
 mod store;
 mod winembed;
 
@@ -718,14 +719,16 @@ fn record_entities(cfg: &mut Config, events: &[github::Event]) {
                 people,
             });
         }
-        let bump = |m: &mut std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>, key: String| {
-            *m.entry(key).or_default().entry(ev.kind.clone()).or_insert(0) += 1;
-        };
-        bump(&mut cfg.stats, ev.repo.clone());
-        if let Some(n) = ev.number {
-            bump(&mut cfg.stats, format!("{}#{n}", ev.repo));
-        }
+        // 统计流水只记「哪个项目在什么时候来了一条通知」，占比由 stats::snapshot 现算
+        let at = chrono::DateTime::parse_from_rfc3339(&ev.created_at)
+            .map(|d| d.timestamp())
+            .unwrap_or_else(|_| chrono::Utc::now().timestamp());
+        cfg.stat_events.push(store::StatEvent {
+            repo: ev.repo.clone(),
+            at,
+        });
     }
+    stats::trim_log(&mut cfg.stat_events);
     // 自动规则最后统一应用：本批次里即使还夹着评论等事件把 status 重置成 unread，
     // 也以「已解决」为准。
     for e in cfg.entities.iter_mut() {
@@ -1108,6 +1111,76 @@ fn get_stats(
     state.config.lock().unwrap().stats.clone()
 }
 
+// ---- 项目外观 / bot 关键词 / 统计窗口 -------------------------------------
+// 已知项目 = 监听过的仓库 + 现有通知 + 统计流水；缺样式的在读取时补齐并落盘，
+// 保证饼图颜色和设置页列表永远对得上。
+fn known_repos(cfg: &Config) -> Vec<String> {
+    let mut repos: Vec<String> = cfg.watches.iter().map(|w| w.repo.clone()).collect();
+    repos.extend(cfg.entities.iter().map(|e| e.repo.clone()));
+    repos.extend(cfg.stat_events.iter().map(|s| s.repo.clone()));
+    repos
+}
+
+#[tauri::command]
+fn get_project_styles(
+    state: tauri::State<Arc<AppState>>,
+) -> std::collections::BTreeMap<String, store::ProjectStyle> {
+    state.with_config(|cfg| {
+        let repos = known_repos(cfg);
+        store::ensure_project_styles(cfg, &repos);
+    });
+    state.config.lock().unwrap().project_styles.clone()
+}
+
+#[tauri::command]
+fn set_project_style(
+    state: tauri::State<Arc<AppState>>,
+    repo: String,
+    color: Option<String>,
+    text_color: Option<String>,
+) -> std::collections::BTreeMap<String, store::ProjectStyle> {
+    let repo = repo.trim().to_string();
+    if repo.is_empty() {
+        return state.config.lock().unwrap().project_styles.clone();
+    }
+    state.with_config(|cfg| {
+        store::ensure_project_styles(cfg, std::slice::from_ref(&repo));
+        if let Some(entry) = cfg.project_styles.get_mut(&repo) {
+            if let Some(c) = color.filter(|v| !v.trim().is_empty()) {
+                entry.color = c;
+            }
+            if let Some(t) = text_color.filter(|v| !v.trim().is_empty()) {
+                entry.text_color = t;
+            }
+        }
+    });
+    state.config.lock().unwrap().project_styles.clone()
+}
+
+#[tauri::command]
+fn get_bot_keywords(state: tauri::State<Arc<AppState>>) -> Vec<String> {
+    state.config.lock().unwrap().bot_keywords.clone()
+}
+
+#[tauri::command]
+fn set_bot_keywords(state: tauri::State<Arc<AppState>>, keywords: Vec<String>) -> Vec<String> {
+    state.with_config(|cfg| {
+        let mut seen = HashSet::new();
+        cfg.bot_keywords = keywords
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && seen.insert(s.to_lowercase()))
+            .collect();
+    });
+    state.config.lock().unwrap().bot_keywords.clone()
+}
+
+#[tauri::command]
+fn get_stats_ranges(state: tauri::State<Arc<AppState>>) -> stats::RangeCount {
+    let cfg = state.config.lock().unwrap().clone();
+    stats::snapshot(&cfg.stat_events, &cfg.entities, chrono::Utc::now().timestamp())
+}
+
 // 添加监听时的浏览弹窗：列出仓库下的 Issue/PR 供勾选（单条监听默认开评论+状态变更）
 #[tauri::command]
 async fn list_repo_items(
@@ -1309,6 +1382,11 @@ pub fn run() {
             delete_event,
             set_pin,
             get_stats,
+            get_stats_ranges,
+            get_project_styles,
+            set_project_style,
+            get_bot_keywords,
+            set_bot_keywords,
             list_repo_items
         ])
         .run(tauri::generate_context!())
