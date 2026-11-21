@@ -266,4 +266,7 @@
 - [x] **D1 落地 PR #1：`tauri-apps/tauri-action@v0 → @v1`**（完成 2026-11-21 @master 直改）
   - `release.yml:28` 由 `@v0` 改 `@v1`。已核对 v1 breaking changes（移除 includeRelease/includeDebug、assetNamePattern 改名等）本项目 with 参数（tagName/releaseName/releaseBody/releaseDraft/prerelease）均未涉及；项目用 tauri 2 稳定版，满足 v1 最低要求。
   - 验收：grep 确认落地、`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告（os error 5 为共享 incremental 锁环境警告）。**v1 实际打包/发布行为待主人 push 后 CI 验证**。
-- [ ] **D2 落地 PR #3：`actions/setup-node@v4 → @v7`**（待执行 @master, 2026-11-21）
+- [x] **D2 落地 PR #3：`actions/setup-node@v4 → @v7`**（完成 2026-11-21 @master 直改）
+  - `ci.yml:20` + `release.yml:20` 由 `@v4` 改 `@v7`。已核对 v5/v6/v7 全部 breaking changes（默认缓存、always-auth 移除、NODE_AUTH_TOKEN fallback 移除、内部迁 ESM）——本项目只设 `node-version: 22` + `cache: npm`，显式指定缓存、未用 registry-url/always-auth，均不受影响；`windows-latest` runner 满足 v5+ 的 node24 运行时要求。
+  - 验收：grep 全量核对 8 处 `uses:` 版本无残留 @v4、D1 的 tauri-action@v1 未误伤，`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告。**v7 实际 CI 行为待主人 push 后由 CI 验证**。
+  - 本轮只处理主人点名的 PR #1/#3；远程其余 PR 的合并/关闭、glib 告警 #1 的 dismiss 均按红线未碰，交主人处理。
