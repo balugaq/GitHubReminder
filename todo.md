@@ -246,3 +246,14 @@
   - `.cargo/config.toml` 注释去掉「所有 worktree 共用」表述（配置项本身保留，避免首次全量重编译）；`docs/HANDOFF.md` 构建章节补一句开发模式与 `AGENTS.md` 指向；`README.md` / `PLAN.md` 无相关表述，未改。
   - 顺带根治历史大坑：旧 §2.2「先删分支再删 worktree」顺序错误两天内踩了 2 次，worktree 机制移除后该坑不复存在。
   - 验收：grep 全仓复核——AGENTS.md 仅剩「不再使用 / 不自行引入」这类说明性提及，创建与合并流程 0 处；`.cargo/config.toml` 与 `docs/HANDOFF.md` 零残留；todo.md 仅历史条目保留。本地 `git branch` 只剩 master、工作区干净。本任务不涉代码，仍按 §3 跑回归：`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告、`npm test` 46/46。敏感信息检查 4 个文件无凭据 / 真实身份 / 业务数据，本机构建路径已收敛为不写具体值。**未 push、未碰远程**；远端遗留 `origin/worktree/m6-manage` 分支按红线不动，交主人决定。
+
+## 本轮任务（2026-11-21）：程序自身开机自启延迟 30 秒
+
+依赖链：独立，无前置 todo。
+
+- [x] **程序自身开机自启改为延迟 30 秒再启动**（完成 2026-11-21 @master 直改）
+  - 需求纠正：主人最初指向的开机脚本 `my_starter.bat`（个人启动目录，主人独立维护）不是问题所在，已把误改完整还原、备份删除。真正要改的是程序自身的开机自启。
+  - 根因：`tauri_plugin_autostart` 经 `auto-launch` 往注册表 Run 写 `"<exe路径> <args>"`，开机时 Windows 立刻拉起 exe → Tauri 进 `run()` 建窗口 → WebView2 运行时 / 桌面 shell 未就绪 → 停在错误页且不自恢复。
+  - 实现：`lib.rs` 顶部加 `AUTOSTART_FLAG = "--from-autostart"` + `AUTOSTART_DELAY_SECS = 30`；`tauri_plugin_autostart::init` 第二参从 `None` 改为 `Some(vec![AUTOSTART_FLAG])`，让插件把 flag 写进注册表启动命令；`run()` 入口在 Builder 之前检 flag，命中就 `std::thread::sleep(30s)` 再建窗。必须在 Builder 之前——窗口在 setup 阶段创建，晚了 webview 已导航，延迟失去意义。手动 `tauri dev` 不带 flag，零影响；现有 6/10/14s 重载兜底在 setup 之后才计时，基准不受影响。
+  - 迁移：本机注册表当前无本应用自启项（仅有一个无关的第三方自启程序），自启处于关闭态；主人在设置页重新打开自启时即写入带新 flag 的命令，无旧命令兼容问题。
+  - 验收：`cargo check`（0，仅有共享 target 目录的 os error 5 环境警告）、`cargo clippy --all-targets -- -D warnings`（0，零代码警告）、`cargo test --lib` 49/49；grep 复核 5 处改动均落地。**30 秒延迟的实际建窗效果待主人在设置页开启自启后、下次开机目视确认**。

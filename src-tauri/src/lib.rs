@@ -16,6 +16,11 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_notification::NotificationExt;
 
+// 开机自启时 WebView2 运行时 / 桌面 shell 常比登录完成更晚就绪，窗口一建就停在错误页且不会自恢复。
+// 插件把此参数写进注册表启动命令，run() 入口据此延迟建窗；手动启动不带参数，不受影响。
+const AUTOSTART_FLAG: &str = "--from-autostart";
+const AUTOSTART_DELAY_SECS: u64 = 30;
+
 pub struct AppState {
     path: PathBuf,
     config: Mutex<Config>,
@@ -1205,12 +1210,17 @@ async fn list_repo_items(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 必须早于 Builder：窗口在 setup 阶段就创建，晚一步 webview 已经导航过，延迟就没意义了。
+    if std::env::args().any(|arg| arg == AUTOSTART_FLAG) {
+        println!("[startup] 开机自启，等待 {AUTOSTART_DELAY_SECS}s 让 WebView2 / 桌面就绪");
+        std::thread::sleep(std::time::Duration::from_secs(AUTOSTART_DELAY_SECS));
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![AUTOSTART_FLAG]),
         ))
         .setup(|app| {
             let path = app
