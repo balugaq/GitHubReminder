@@ -257,3 +257,13 @@
   - 实现：`lib.rs` 顶部加 `AUTOSTART_FLAG = "--from-autostart"` + `AUTOSTART_DELAY_SECS = 30`；`tauri_plugin_autostart::init` 第二参从 `None` 改为 `Some(vec![AUTOSTART_FLAG])`，让插件把 flag 写进注册表启动命令；`run()` 入口在 Builder 之前检 flag，命中就 `std::thread::sleep(30s)` 再建窗。必须在 Builder 之前——窗口在 setup 阶段创建，晚了 webview 已导航，延迟失去意义。手动 `tauri dev` 不带 flag，零影响；现有 6/10/14s 重载兜底在 setup 之后才计时，基准不受影响。
   - 迁移：本机注册表当前无本应用自启项（仅有一个无关的第三方自启程序），自启处于关闭态；主人在设置页重新打开自启时即写入带新 flag 的命令，无旧命令兼容问题。
   - 验收：`cargo check`（0，仅有共享 target 目录的 os error 5 环境警告）、`cargo clippy --all-targets -- -D warnings`（0，零代码警告）、`cargo test --lib` 49/49；grep 复核 5 处改动均落地。**30 秒延迟的实际建窗效果待主人在设置页开启自启后、下次开机目视确认**。
+
+## 本轮任务（2026-11-21）：Dependabot 升级 PR 本地落地
+
+依赖链（已发给主人确认）：`D1 tauri-action@v1`（release.yml）‖ `D2 setup-node@v7`（ci.yml + release.yml）‖ `D3 glib 告警`——三者无前置 todo、相互独立；D1/D2 改同一文件但不同行，不冲突。
+主人拍板：① 修复边界=**本地落地 + 逐条提交**，远程 PR 的合并/关闭与告警 dismiss 归主人（红线不碰远程）；② **glib 本轮先不碰**——tauri 最新 2.12.7 仍钉 gtk ^0.18 → glib ^0.18，`cargo update -p glib --precise 0.20.0` 只读验证报约束不匹配，且该链仅 Linux/BSD 编译（本项目 Windows-only，告警 reachability=disabled），代码侧无解。
+
+- [x] **D1 落地 PR #1：`tauri-apps/tauri-action@v0 → @v1`**（完成 2026-11-21 @master 直改）
+  - `release.yml:28` 由 `@v0` 改 `@v1`。已核对 v1 breaking changes（移除 includeRelease/includeDebug、assetNamePattern 改名等）本项目 with 参数（tagName/releaseName/releaseBody/releaseDraft/prerelease）均未涉及；项目用 tauri 2 稳定版，满足 v1 最低要求。
+  - 验收：grep 确认落地、`cargo check` + `cargo clippy --all-targets -- -D warnings` 零代码警告（os error 5 为共享 incremental 锁环境警告）。**v1 实际打包/发布行为待主人 push 后 CI 验证**。
+- [ ] **D2 落地 PR #3：`actions/setup-node@v4 → @v7`**（待执行 @master, 2026-11-21）
